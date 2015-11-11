@@ -77,13 +77,19 @@ static void mergeSampleProfile(const cl::list<std::string> &Inputs,
 
   auto Writer = std::move(WriterOrErr.get());
   StringMap<FunctionSamples> ProfileMap;
+  SmallVector<std::unique_ptr<sampleprof::SampleProfileReader>, 5> Readers;
   for (const auto &Filename : Inputs) {
     auto ReaderOrErr =
         SampleProfileReader::create(Filename, getGlobalContext());
     if (std::error_code EC = ReaderOrErr.getError())
       exitWithError(EC.message(), Filename);
 
-    auto Reader = std::move(ReaderOrErr.get());
+    // We need to keep the readers around until after all the files are
+    // read so that we do not lose the function names stored in each
+    // reader's memory. The function names are needed to write out the
+    // merged profile map.
+    Readers.push_back(std::move(ReaderOrErr.get()));
+    const auto Reader = Readers.back().get();
     if (std::error_code EC = Reader->read())
       exitWithError(EC.message(), Filename);
 
@@ -162,8 +168,8 @@ static int showInstrProfile(std::string Filename, bool ShowCounts,
          << "    Counters: " << Func.Counts.size() << "\n"
          << "    Function count: " << Func.Counts[0] << "\n";
       if (ShowIndirectCallTargets)
-        OS << "    Indirect Call Site Count: " << Func.IndirectCallSites.size()
-           << "\n";
+        OS << "    Indirect Call Site Count: "
+           << Func.getNumValueSites(IPVK_IndirectCallTarget) << "\n";
     }
 
     if (Show && ShowCounts)
@@ -178,11 +184,15 @@ static int showInstrProfile(std::string Filename, bool ShowCounts,
       OS << "]\n";
 
     if (Show && ShowIndirectCallTargets) {
+      uint32_t NS = Func.getNumValueSites(IPVK_IndirectCallTarget);
       OS << "    Indirect Target Results: \n";
-      for (size_t I = 0, E = Func.IndirectCallSites.size(); I < E; ++I) {
-        for (auto V : Func.IndirectCallSites[I].ValueData) {
+      for (size_t I = 0; I < NS; ++I) {
+        uint32_t NV = Func.getNumValueDataForSite(IPVK_IndirectCallTarget, I);
+        std::unique_ptr<InstrProfValueData[]> VD =
+            Func.getValueForSite(IPVK_IndirectCallTarget, I);
+        for (uint32_t V = 0; V < NV; V++) {
           OS << "\t[ " << I << ", ";
-          OS << (const char *)V.first << ", " << V.second << " ]\n";
+          OS << (const char *)VD[V].Value << ", " << VD[V].Count << " ]\n";
         }
       }
     }

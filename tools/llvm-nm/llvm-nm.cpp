@@ -44,6 +44,7 @@
 #include <cstring>
 #include <system_error>
 #include <vector>
+
 using namespace llvm;
 using namespace object;
 
@@ -64,27 +65,30 @@ cl::list<std::string> InputFilenames(cl::Positional, cl::desc("<input files>"),
 cl::opt<bool> UndefinedOnly("undefined-only",
                             cl::desc("Show only undefined symbols"));
 cl::alias UndefinedOnly2("u", cl::desc("Alias for --undefined-only"),
-                         cl::aliasopt(UndefinedOnly));
+                         cl::aliasopt(UndefinedOnly), cl::Grouping);
 
 cl::opt<bool> DynamicSyms("dynamic",
                           cl::desc("Display the dynamic symbols instead "
                                    "of normal symbols."));
 cl::alias DynamicSyms2("D", cl::desc("Alias for --dynamic"),
-                       cl::aliasopt(DynamicSyms));
+                       cl::aliasopt(DynamicSyms), cl::Grouping);
 
 cl::opt<bool> DefinedOnly("defined-only",
                           cl::desc("Show only defined symbols"));
 cl::alias DefinedOnly2("U", cl::desc("Alias for --defined-only"),
-                       cl::aliasopt(DefinedOnly));
+                       cl::aliasopt(DefinedOnly), cl::Grouping);
 
 cl::opt<bool> ExternalOnly("extern-only",
                            cl::desc("Show only external symbols"));
 cl::alias ExternalOnly2("g", cl::desc("Alias for --extern-only"),
-                        cl::aliasopt(ExternalOnly));
+                        cl::aliasopt(ExternalOnly), cl::Grouping);
 
-cl::opt<bool> BSDFormat("B", cl::desc("Alias for --format=bsd"));
-cl::opt<bool> POSIXFormat("P", cl::desc("Alias for --format=posix"));
-cl::opt<bool> DarwinFormat("m", cl::desc("Alias for --format=darwin"));
+cl::opt<bool> BSDFormat("B", cl::desc("Alias for --format=bsd"),
+                        cl::Grouping);
+cl::opt<bool> POSIXFormat("P", cl::desc("Alias for --format=posix"),
+                          cl::Grouping);
+cl::opt<bool> DarwinFormat("m", cl::desc("Alias for --format=darwin"),
+                           cl::Grouping);
 
 static cl::list<std::string>
     ArchFlags("arch", cl::desc("architecture(s) from a Mach-O file to dump"),
@@ -96,32 +100,33 @@ cl::opt<bool> PrintFileName(
     cl::desc("Precede each symbol with the object file it came from"));
 
 cl::alias PrintFileNameA("A", cl::desc("Alias for --print-file-name"),
-                         cl::aliasopt(PrintFileName));
+                         cl::aliasopt(PrintFileName), cl::Grouping);
 cl::alias PrintFileNameo("o", cl::desc("Alias for --print-file-name"),
-                         cl::aliasopt(PrintFileName));
+                         cl::aliasopt(PrintFileName), cl::Grouping);
 
 cl::opt<bool> DebugSyms("debug-syms",
                         cl::desc("Show all symbols, even debugger only"));
 cl::alias DebugSymsa("a", cl::desc("Alias for --debug-syms"),
-                     cl::aliasopt(DebugSyms));
+                     cl::aliasopt(DebugSyms), cl::Grouping);
 
 cl::opt<bool> NumericSort("numeric-sort", cl::desc("Sort symbols by address"));
 cl::alias NumericSortn("n", cl::desc("Alias for --numeric-sort"),
-                       cl::aliasopt(NumericSort));
+                       cl::aliasopt(NumericSort), cl::Grouping);
 cl::alias NumericSortv("v", cl::desc("Alias for --numeric-sort"),
-                       cl::aliasopt(NumericSort));
+                       cl::aliasopt(NumericSort), cl::Grouping);
 
 cl::opt<bool> NoSort("no-sort", cl::desc("Show symbols in order encountered"));
-cl::alias NoSortp("p", cl::desc("Alias for --no-sort"), cl::aliasopt(NoSort));
+cl::alias NoSortp("p", cl::desc("Alias for --no-sort"), cl::aliasopt(NoSort),
+                  cl::Grouping);
 
 cl::opt<bool> ReverseSort("reverse-sort", cl::desc("Sort in reverse order"));
 cl::alias ReverseSortr("r", cl::desc("Alias for --reverse-sort"),
-                       cl::aliasopt(ReverseSort));
+                       cl::aliasopt(ReverseSort), cl::Grouping);
 
 cl::opt<bool> PrintSize("print-size",
                         cl::desc("Show symbol size instead of address"));
 cl::alias PrintSizeS("S", cl::desc("Alias for --print-size"),
-                     cl::aliasopt(PrintSize));
+                     cl::aliasopt(PrintSize), cl::Grouping);
 
 cl::opt<bool> SizeSort("size-sort", cl::desc("Sort symbols by size"));
 
@@ -130,12 +135,12 @@ cl::opt<bool> WithoutAliases("without-aliases", cl::Hidden,
 
 cl::opt<bool> ArchiveMap("print-armap", cl::desc("Print the archive map"));
 cl::alias ArchiveMaps("M", cl::desc("Alias for --print-armap"),
-                      cl::aliasopt(ArchiveMap));
+                      cl::aliasopt(ArchiveMap), cl::Grouping);
 
 cl::opt<bool> JustSymbolName("just-symbol-name",
                              cl::desc("Print just the symbol's name"));
 cl::alias JustSymbolNames("j", cl::desc("Alias for --just-symbol-name"),
-                          cl::aliasopt(JustSymbolName));
+                          cl::aliasopt(JustSymbolName), cl::Grouping);
 
 // FIXME: This option takes exactly two strings and should be allowed anywhere
 // on the command line.  Such that "llvm-nm -s __TEXT __text foo.o" would work.
@@ -147,7 +152,7 @@ cl::list<std::string> SegSect("s", cl::Positional, cl::ZeroOrMore,
                                        "and section name, Mach-O only"));
 
 cl::opt<bool> FormatMachOasHex("x", cl::desc("Print symbol entry in hex, "
-                                             "Mach-O only"));
+                                             "Mach-O only"), cl::Grouping);
 
 cl::opt<bool> NoLLVMBitcode("no-llvm-bc",
                             cl::desc("Disable LLVM bitcode reader"));
@@ -159,7 +164,7 @@ bool MultipleFiles = false;
 bool HadError = false;
 
 std::string ToolName;
-}
+} // anonymous namespace
 
 static void error(Twine Message, Twine Path = Twine()) {
   HadError = true;
@@ -182,7 +187,7 @@ struct NMSymbol {
   StringRef Name;
   BasicSymbolRef Sym;
 };
-}
+} // anonymous namespace
 
 static bool compareSymbolAddress(const NMSymbol &A, const NMSymbol &B) {
   bool ADefined = !(A.Sym.getFlags() & SymbolRef::SF_Undefined);
@@ -439,13 +444,14 @@ static const struct DarwinStabName DarwinStabNames[] = {
     {MachO::N_ECOMM, "ECOMM"},
     {MachO::N_ECOML, "ECOML"},
     {MachO::N_LENG, "LENG"},
-    {0, 0}};
+    {0, nullptr}};
+
 static const char *getDarwinStabString(uint8_t NType) {
   for (unsigned i = 0; DarwinStabNames[i].Name; i++) {
     if (DarwinStabNames[i].NType == NType)
       return DarwinStabNames[i].Name;
   }
-  return 0;
+  return nullptr;
 }
 
 // darwinPrintStab() prints the n_sect, n_desc along with a symbolic name of
@@ -526,6 +532,9 @@ static void sortAndPrintSymbolList(SymbolicFile &Obj, bool printName,
     if (!Undefined && UndefinedOnly)
       continue;
     if (Undefined && DefinedOnly)
+      continue;
+    bool Global = SymFlags & SymbolRef::SF_Global;
+    if (!Global && ExternalOnly)
       continue;
     if (SizeSort && !PrintAddress)
       continue;
@@ -943,10 +952,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
       if (I != E) {
         outs() << "Archive map\n";
         for (; I != E; ++I) {
-          ErrorOr<Archive::child_iterator> C = I->getMember();
+          ErrorOr<Archive::Child> C = I->getMember();
           if (error(C.getError()))
             return;
-          ErrorOr<StringRef> FileNameOrErr = C.get()->getName();
+          ErrorOr<StringRef> FileNameOrErr = C->getName();
           if (error(FileNameOrErr.getError()))
             return;
           StringRef SymName = I->getName();
@@ -958,7 +967,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
 
     for (Archive::child_iterator I = A->child_begin(), E = A->child_end();
          I != E; ++I) {
-      ErrorOr<std::unique_ptr<Binary>> ChildOrErr = I->getAsBinary(&Context);
+      if (error(I->getError()))
+        return;
+      auto &C = I->get();
+      ErrorOr<std::unique_ptr<Binary>> ChildOrErr = C.getAsBinary(&Context);
       if (ChildOrErr.getError())
         continue;
       if (SymbolicFile *O = dyn_cast<SymbolicFile>(&*ChildOrErr.get())) {
@@ -1013,8 +1025,11 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
               for (Archive::child_iterator AI = A->child_begin(),
                                            AE = A->child_end();
                    AI != AE; ++AI) {
+                if (error(AI->getError()))
+                  return;
+                auto &C = AI->get();
                 ErrorOr<std::unique_ptr<Binary>> ChildOrErr =
-                    AI->getAsBinary(&Context);
+                    C.getAsBinary(&Context);
                 if (ChildOrErr.getError())
                   continue;
                 if (SymbolicFile *O =
@@ -1067,8 +1082,11 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
             for (Archive::child_iterator AI = A->child_begin(),
                                          AE = A->child_end();
                  AI != AE; ++AI) {
+              if (error(AI->getError()))
+                return;
+              auto &C = AI->get();
               ErrorOr<std::unique_ptr<Binary>> ChildOrErr =
-                  AI->getAsBinary(&Context);
+                  C.getAsBinary(&Context);
               if (ChildOrErr.getError())
                 continue;
               if (SymbolicFile *O =
@@ -1116,8 +1134,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
         std::unique_ptr<Archive> &A = *AOrErr;
         for (Archive::child_iterator AI = A->child_begin(), AE = A->child_end();
              AI != AE; ++AI) {
-          ErrorOr<std::unique_ptr<Binary>> ChildOrErr =
-              AI->getAsBinary(&Context);
+          if (error(AI->getError()))
+            return;
+          auto &C = AI->get();
+          ErrorOr<std::unique_ptr<Binary>> ChildOrErr = C.getAsBinary(&Context);
           if (ChildOrErr.getError())
             continue;
           if (SymbolicFile *O = dyn_cast<SymbolicFile>(&*ChildOrErr.get())) {
@@ -1150,7 +1170,6 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     return;
   }
   error("unrecognizable file type", Filename);
-  return;
 }
 
 int main(int argc, char **argv) {

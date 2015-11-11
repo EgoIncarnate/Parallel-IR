@@ -817,7 +817,7 @@ void SlotTracker::processFunction() {
   for(Function::const_arg_iterator AI = TheFunction->arg_begin(),
       AE = TheFunction->arg_end(); AI != AE; ++AI)
     if (!AI->hasName())
-      CreateFunctionSlot(AI);
+      CreateFunctionSlot(&*AI);
 
   ST_DEBUG("Inserting Instructions:\n");
 
@@ -1692,7 +1692,6 @@ static void writeDISubprogram(raw_ostream &Out, const DISubprogram *N,
   Printer.printInt("virtualIndex", N->getVirtualIndex());
   Printer.printDIFlags("flags", N->getFlags());
   Printer.printBool("isOptimized", N->isOptimized());
-  Printer.printMetadata("function", N->getRawFunction());
   Printer.printMetadata("templateParams", N->getRawTemplateParams());
   Printer.printMetadata("declaration", N->getRawDeclaration());
   Printer.printMetadata("variables", N->getRawVariables());
@@ -2635,7 +2634,7 @@ void AssemblyWriter::printFunction(const Function *F) {
     Out << " {";
     // Output all of the function's basic blocks.
     for (Function::const_iterator I = F->begin(), E = F->end(); I != E; ++I)
-      printBasicBlock(I);
+      printBasicBlock(&*I);
 
     // Output the function's use-lists.
     printUseLists(F);

@@ -185,7 +185,7 @@ bool LLParser::ValidateEndOfModule() {
 
   // Look for intrinsic functions and CallInst that need to be upgraded
   for (Module::iterator FI = M->begin(), FE = M->end(); FI != FE; )
-    UpgradeCallsToIntrinsic(FI++); // must be post-increment, as we remove
+    UpgradeCallsToIntrinsic(&*FI++); // must be post-increment, as we remove
 
   UpgradeDebugInfo(*M);
 
@@ -998,6 +998,7 @@ bool LLParser::ParseFnAttributeValuePairs(AttrBuilder &B,
     case lltok::kw_nonlazybind: B.addAttribute(Attribute::NonLazyBind); break;
     case lltok::kw_noredzone: B.addAttribute(Attribute::NoRedZone); break;
     case lltok::kw_noreturn: B.addAttribute(Attribute::NoReturn); break;
+    case lltok::kw_norecurse: B.addAttribute(Attribute::NoRecurse); break;
     case lltok::kw_nounwind: B.addAttribute(Attribute::NoUnwind); break;
     case lltok::kw_optnone: B.addAttribute(Attribute::OptimizeNone); break;
     case lltok::kw_optsize: B.addAttribute(Attribute::OptimizeForSize); break;
@@ -2263,10 +2264,9 @@ LLParser::PerFunctionState::PerFunctionState(LLParser &p, Function &f,
   : P(p), F(f), FunctionNumber(functionNumber) {
 
   // Insert unnamed arguments into the NumberedVals list.
-  for (Function::arg_iterator AI = F.arg_begin(), E = F.arg_end();
-       AI != E; ++AI)
-    if (!AI->hasName())
-      NumberedVals.push_back(AI);
+  for (Argument &A : F.args())
+    if (!A.hasName())
+      NumberedVals.push_back(&A);
 }
 
 LLParser::PerFunctionState::~PerFunctionState() {
@@ -3808,8 +3808,8 @@ bool LLParser::ParseDICompileUnit(MDNode *&Result, bool IsDistinct) {
 ///                     isDefinition: true, scopeLine: 8, containingType: !3,
 ///                     virtuality: DW_VIRTUALTIY_pure_virtual,
 ///                     virtualIndex: 10, flags: 11,
-///                     isOptimized: false, function: void ()* @_Z3foov,
-///                     templateParams: !4, declaration: !5, variables: !6)
+///                     isOptimized: false, templateParams: !4, declaration: !5,
+///                     variables: !6)
 bool LLParser::ParseDISubprogram(MDNode *&Result, bool IsDistinct) {
   auto Loc = Lex.getLoc();
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
@@ -3827,7 +3827,6 @@ bool LLParser::ParseDISubprogram(MDNode *&Result, bool IsDistinct) {
   OPTIONAL(virtualIndex, MDUnsignedField, (0, UINT32_MAX));                    \
   OPTIONAL(flags, DIFlagField, );                                              \
   OPTIONAL(isOptimized, MDBoolField, );                                        \
-  OPTIONAL(function, MDConstant, );                                            \
   OPTIONAL(templateParams, MDField, );                                         \
   OPTIONAL(declaration, MDField, );                                            \
   OPTIONAL(variables, MDField, );
@@ -3840,11 +3839,11 @@ bool LLParser::ParseDISubprogram(MDNode *&Result, bool IsDistinct) {
         "missing 'distinct', required for !DISubprogram when 'isDefinition'");
 
   Result = GET_OR_DISTINCT(
-      DISubprogram, (Context, scope.Val, name.Val, linkageName.Val, file.Val,
-                     line.Val, type.Val, isLocal.Val, isDefinition.Val,
-                     scopeLine.Val, containingType.Val, virtuality.Val,
-                     virtualIndex.Val, flags.Val, isOptimized.Val, function.Val,
-                     templateParams.Val, declaration.Val, variables.Val));
+      DISubprogram,
+      (Context, scope.Val, name.Val, linkageName.Val, file.Val, line.Val,
+       type.Val, isLocal.Val, isDefinition.Val, scopeLine.Val,
+       containingType.Val, virtuality.Val, virtualIndex.Val, flags.Val,
+       isOptimized.Val, templateParams.Val, declaration.Val, variables.Val));
   return false;
 }
 

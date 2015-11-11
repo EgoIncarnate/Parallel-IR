@@ -402,11 +402,6 @@ public:
   /// not marked dead.
   bool hasLiveCondCodeDef(MachineInstr *MI) const;
 
-  static bool isX86_64ExtendedReg(const MachineOperand &MO) {
-    if (!MO.isReg()) return false;
-    return X86II::isX86_64ExtendedReg(MO.getReg());
-  }
-
   /// getGlobalBaseReg - Return a virtual register initialized with the
   /// the global base register value. Output instructions required to
   /// initialize the register in the function entry block, if necessary.
@@ -516,6 +511,14 @@ private:
                                               MachineFunction::iterator &MFI,
                                               MachineBasicBlock::iterator &MBBI,
                                               LiveVariables *LV) const;
+
+  /// Handles memory folding for special case instructions, for instance those
+  /// requiring custom manipulation of the address.
+  MachineInstr *foldMemoryOperandCustom(MachineFunction &MF, MachineInstr *MI,
+                                        unsigned OpNum,
+                                        ArrayRef<MachineOperand> MOs,
+                                        MachineBasicBlock::iterator InsertPt,
+                                        unsigned Size, unsigned Align) const;
 
   /// isFrameOperand - Return true and the FrameIndex if the specified
   /// operand and follow operands form a reference to the stack frame.

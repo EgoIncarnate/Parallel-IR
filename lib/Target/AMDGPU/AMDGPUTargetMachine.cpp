@@ -44,7 +44,12 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   RegisterTargetMachine<GCNTargetMachine> Y(TheGCNTarget);
 
   PassRegistry *PR = PassRegistry::getPassRegistry();
+  initializeSILowerI1CopiesPass(*PR);
+  initializeSIFixSGPRCopiesPass(*PR);
+  initializeSIFoldOperandsPass(*PR);
   initializeSIFixSGPRLiveRangesPass(*PR);
+  initializeSIFixControlFlowLiveIntervalsPass(*PR);
+  initializeSILoadStoreOptimizerPass(*PR);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -272,7 +277,7 @@ bool GCNPassConfig::addPreISel() {
 bool GCNPassConfig::addInstSelector() {
   AMDGPUPassConfig::addInstSelector();
   addPass(createSILowerI1CopiesPass());
-  addPass(createSIFixSGPRCopiesPass(*TM));
+  addPass(&SIFixSGPRCopiesID);
   addPass(createSIFoldOperandsPass());
   return false;
 }
@@ -284,7 +289,6 @@ void GCNPassConfig::addPreRegAlloc() {
   // earlier passes might recompute live intervals.
   // TODO: handle CodeGenOpt::None; fast RA ignores spill weights set by the pass
   if (getOptLevel() > CodeGenOpt::None) {
-    initializeSIFixControlFlowLiveIntervalsPass(*PassRegistry::getPassRegistry());
     insertPass(&MachineSchedulerID, &SIFixControlFlowLiveIntervalsID);
   }
 
@@ -294,7 +298,6 @@ void GCNPassConfig::addPreRegAlloc() {
 
     // This should be run after scheduling, but before register allocation. It
     // also need extra copies to the address operand to be eliminated.
-    initializeSILoadStoreOptimizerPass(*PassRegistry::getPassRegistry());
     insertPass(&MachineSchedulerID, &SILoadStoreOptimizerID);
     insertPass(&MachineSchedulerID, &RegisterCoalescerID);
   }
@@ -309,7 +312,9 @@ void GCNPassConfig::addFastRegAlloc(FunctionPass *RegAllocPass) {
 void GCNPassConfig::addOptimizedRegAlloc(FunctionPass *RegAllocPass) {
   // We want to run this after LiveVariables is computed to avoid computing them
   // twice.
-  insertPass(&LiveVariablesID, &SIFixSGPRLiveRangesID);
+  // FIXME: We shouldn't disable the verifier here. r249087 introduced a failure
+  // that needs to be fixed.
+  insertPass(&LiveVariablesID, &SIFixSGPRLiveRangesID, /*VerifyAfter=*/false);
   TargetPassConfig::addOptimizedRegAlloc(RegAllocPass);
 }
 

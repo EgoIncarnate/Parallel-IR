@@ -22,15 +22,13 @@ function(llvm_update_compile_flags name)
       list(APPEND LLVM_COMPILE_DEFINITIONS _HAS_EXCEPTIONS=0)
       list(APPEND LLVM_COMPILE_FLAGS "/EHs-c-")
     endif()
-    if (CLANG_CL)
-      # FIXME: Remove this once clang-cl supports SEH
-      list(APPEND LLVM_COMPILE_DEFINITIONS "GTEST_HAS_SEH=0")
-    endif()
   endif()
 
   # LLVM_REQUIRES_RTTI is an internal flag that individual
   # targets can use to force RTTI
+  set(LLVM_CONFIG_HAS_RTTI YES CACHE INTERNAL "")
   if(NOT (LLVM_REQUIRES_RTTI OR LLVM_ENABLE_RTTI))
+    set(LLVM_CONFIG_HAS_RTTI NO CACHE INTERNAL "")
     list(APPEND LLVM_COMPILE_DEFINITIONS GTEST_HAS_RTTI=0)
     if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
       list(APPEND LLVM_COMPILE_FLAGS "-fno-rtti")
@@ -326,10 +324,12 @@ endfunction(set_windows_version_resource_properties)
 #     Same semantics as target_link_libraries().
 #   ADDITIONAL_HEADERS
 #     May specify header files for IDE generators.
+#   SONAME
+#     Should set SONAME link flags and create symlinks
 #   )
 function(llvm_add_library name)
   cmake_parse_arguments(ARG
-    "MODULE;SHARED;STATIC;DISABLE_LLVM_LINK_LLVM_DYLIB"
+    "MODULE;SHARED;STATIC;DISABLE_LLVM_LINK_LLVM_DYLIB;SONAME"
     "OUTPUT_NAME"
     "ADDITIONAL_HEADERS;DEPENDS;LINK_COMPONENTS;LINK_LIBS;OBJLIBS"
     ${ARGN})
@@ -434,11 +434,6 @@ function(llvm_add_library name)
         PREFIX ""
         )
     endif()
-
-    set_target_properties(${name}
-      PROPERTIES
-      SOVERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
-      VERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX})
   endif()
 
   if(ARG_MODULE OR ARG_SHARED)
@@ -503,7 +498,7 @@ endfunction()
 
 macro(add_llvm_library name)
   cmake_parse_arguments(ARG
-    "SHARED"
+    "SHARED;SONAME"
     ""
     ""
     ${ARGN})
@@ -545,6 +540,19 @@ macro(add_llvm_library name)
                           COMMAND "${CMAKE_COMMAND}"
                                   -DCMAKE_INSTALL_COMPONENT=${name}
                                   -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+      endif()
+      if(ARG_SHARED AND UNIX)
+        if(NOT APPLE AND ARG_SONAME)
+          set(library_name ${name}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}${LLVM_VERSION_SUFFIX})
+          set(api_name ${name}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX})
+          set_target_properties(${name} PROPERTIES OUTPUT_NAME ${library_name})
+          llvm_install_library_symlink(${api_name} ${library_name} SHARED
+            COMPONENT ${name}
+            ALWAYS_GENERATE)
+          llvm_install_library_symlink(${name} ${library_name} SHARED
+            COMPONENT ${name}
+            ALWAYS_GENERATE)
+        endif()
       endif()
     endif()
     set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
@@ -734,12 +742,10 @@ function(canonicalize_tool_name name output)
   set(${output} "${nameUPPER}" PARENT_SCOPE)
 endfunction(canonicalize_tool_name)
 
-# Add external project that may want to be built as part of llvm such as Clang,
-# lld, and Polly. This adds two options. One for the source directory of the
-# project, which defaults to ${CMAKE_CURRENT_SOURCE_DIR}/${name}. Another to
-# enable or disable building it with everything else.
-# Additional parameter can be specified as the name of directory.
-macro(add_llvm_external_project name)
+# Custom add_subdirectory wrapper
+# Takes in a project name (i.e. LLVM), the the subdirectory name, and an
+# and an optional path if it differs from the name.
+macro(add_llvm_subdirectory project type name)
   set(add_llvm_external_dir "${ARGN}")
   if("${add_llvm_external_dir}" STREQUAL "")
     set(add_llvm_external_dir ${name})
@@ -747,39 +753,48 @@ macro(add_llvm_external_project name)
   canonicalize_tool_name(${name} nameUPPER)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${add_llvm_external_dir}/CMakeLists.txt)
     # Treat it as in-tree subproject.
-    option(LLVM_TOOL_${nameUPPER}_BUILD
-           "Whether to build ${name} as part of LLVM" On)
-    mark_as_advanced(LLVM_TOOL_${name}_BUILD)
-    if(LLVM_TOOL_${nameUPPER}_BUILD)
+    option(${project}_${type}_${nameUPPER}_BUILD
+           "Whether to build ${name} as part of ${project}" On)
+    mark_as_advanced(${project}_${type}_${name}_BUILD)
+    if(${project}_${type}_${nameUPPER}_BUILD)
       add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/${add_llvm_external_dir} ${add_llvm_external_dir})
       # Don't process it in add_llvm_implicit_projects().
-      set(LLVM_TOOL_${nameUPPER}_BUILD OFF)
+      set(${project}_${type}_${nameUPPER}_BUILD OFF)
     endif()
   else()
     set(LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR
       "${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR}"
       CACHE PATH "Path to ${name} source directory")
-    set(LLVM_TOOL_${nameUPPER}_BUILD_DEFAULT ON)
+    set(${project}_${type}_${nameUPPER}_BUILD_DEFAULT ON)
     if(NOT LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR OR NOT EXISTS ${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR})
-      set(LLVM_TOOL_${nameUPPER}_BUILD_DEFAULT OFF)
+      set(${project}_${type}_${nameUPPER}_BUILD_DEFAULT OFF)
     endif()
     if("${LLVM_EXTERNAL_${nameUPPER}_BUILD}" STREQUAL "OFF")
-      set(LLVM_TOOL_${nameUPPER}_BUILD_DEFAULT OFF)
+      set(${project}_${type}_${nameUPPER}_BUILD_DEFAULT OFF)
     endif()
-    option(LLVM_TOOL_${nameUPPER}_BUILD
+    option(${project}_${type}_${nameUPPER}_BUILD
       "Whether to build ${name} as part of LLVM"
-      ${LLVM_TOOL_${nameUPPER}_BUILD_DEFAULT})
-    if (LLVM_TOOL_${nameUPPER}_BUILD)
+      ${${project}_${type}_${nameUPPER}_BUILD_DEFAULT})
+    if (${project}_${type}_${nameUPPER}_BUILD)
       if(EXISTS ${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR})
         add_subdirectory(${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR} ${add_llvm_external_dir})
       elseif(NOT "${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR}" STREQUAL "")
         message(WARNING "Nonexistent directory for ${name}: ${LLVM_EXTERNAL_${nameUPPER}_SOURCE_DIR}")
       endif()
       # FIXME: It'd be redundant.
-      set(LLVM_TOOL_${nameUPPER}_BUILD Off)
+      set(${project}_${type}_${nameUPPER}_BUILD Off)
     endif()
   endif()
-endmacro(add_llvm_external_project)
+endmacro()
+
+# Add external project that may want to be built as part of llvm such as Clang,
+# lld, and Polly. This adds two options. One for the source directory of the
+# project, which defaults to ${CMAKE_CURRENT_SOURCE_DIR}/${name}. Another to
+# enable or disable building it with everything else.
+# Additional parameter can be specified as the name of directory.
+macro(add_llvm_external_project name)
+  add_llvm_subdirectory(LLVM TOOL ${name} ${ARGN})
+endmacro()
 
 macro(add_llvm_tool_subdirectory name)
   add_llvm_external_project(${name})
@@ -795,16 +810,20 @@ function(get_project_name_from_src_var var output)
   endif()
 endfunction()
 
-function(create_llvm_tool_options)
+function(create_subdirectory_options project type)
   file(GLOB sub-dirs "${CMAKE_CURRENT_SOURCE_DIR}/*")
   foreach(dir ${sub-dirs})
     if(IS_DIRECTORY "${dir}" AND EXISTS "${dir}/CMakeLists.txt")
       canonicalize_tool_name(${dir} name)
-      option(LLVM_TOOL_${name}_BUILD
-           "Whether to build ${name} as part of LLVM" On)
-      mark_as_advanced(LLVM_TOOL_${name}_BUILD)
+      option(${project}_${type}_${name}_BUILD
+           "Whether to build ${name} as part of ${project}" On)
+      mark_as_advanced(${project}_${type}_${name}_BUILD)
     endif()
   endforeach()
+endfunction(create_subdirectory_options)
+
+function(create_llvm_tool_options)
+  create_subdirectory_options(LLVM TOOL)
 endfunction(create_llvm_tool_options)
 
 function(add_llvm_implicit_projects)
@@ -1033,6 +1052,41 @@ function(add_lit_testsuites project directory)
   endif()
 endfunction()
 
+function(llvm_install_library_symlink name dest type)
+  cmake_parse_arguments(ARG "ALWAYS_GENERATE" "COMPONENT" "" ${ARGN})
+  foreach(path ${CMAKE_MODULE_PATH})
+    if(EXISTS ${path}/LLVMInstallSymlink.cmake)
+      set(INSTALL_SYMLINK ${path}/LLVMInstallSymlink.cmake)
+      break()
+    endif()
+  endforeach()
+
+  set(component ${ARG_COMPONENT})
+  if(NOT component)
+    set(component ${name})
+  endif()
+
+  set(full_name ${CMAKE_${type}_LIBRARY_PREFIX}${name}${CMAKE_${type}_LIBRARY_SUFFIX})
+  set(full_dest ${CMAKE_${type}_LIBRARY_PREFIX}${dest}${CMAKE_${type}_LIBRARY_SUFFIX})
+
+  set(output_dir lib)
+  if(WIN32 AND "${type}" STREQUAL "SHARED")
+    set(output_dir bin)
+  endif()
+
+  install(SCRIPT ${INSTALL_SYMLINK}
+          CODE "install_symlink(${full_name} ${full_dest} ${output_dir})"
+          COMPONENT ${component})
+
+  if (NOT CMAKE_CONFIGURATION_TYPES AND NOT ARG_ALWAYS_GENERATE)
+    add_custom_target(install-${name}
+                      DEPENDS ${name} ${dest} install-${dest}
+                      COMMAND "${CMAKE_COMMAND}"
+                              -DCMAKE_INSTALL_COMPONENT=${name}
+                              -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+  endif()
+endfunction()
+
 function(llvm_install_symlink name dest)
   cmake_parse_arguments(ARG "ALWAYS_GENERATE" "" "" ${ARGN})
   foreach(path ${CMAKE_MODULE_PATH})
@@ -1048,8 +1102,11 @@ function(llvm_install_symlink name dest)
     set(component ${name})
   endif()
 
+  set(full_name ${name}${CMAKE_EXECUTABLE_SUFFIX})
+  set(full_dest ${dest}${CMAKE_EXECUTABLE_SUFFIX})
+
   install(SCRIPT ${INSTALL_SYMLINK}
-          CODE "install_symlink(${name} ${dest})"
+          CODE "install_symlink(${full_name} ${full_dest} bin)"
           COMPONENT ${component})
 
   if (NOT CMAKE_CONFIGURATION_TYPES AND NOT ARG_ALWAYS_GENERATE)

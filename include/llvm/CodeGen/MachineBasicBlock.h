@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/Support/BranchProbability.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/DataTypes.h"
 #include <functional>
@@ -78,7 +79,7 @@ public:
         : PhysReg(PhysReg), LaneMask(LaneMask) {}
   };
 
-protected:
+private:
   typedef ilist<MachineInstr> Instructions;
   Instructions Insts;
   const BasicBlock *BB;
@@ -95,6 +96,14 @@ protected:
   std::vector<uint32_t> Weights;
   typedef std::vector<uint32_t>::iterator weight_iterator;
   typedef std::vector<uint32_t>::const_iterator const_weight_iterator;
+
+  /// Keep track of the probabilities to the successors. This vector has the
+  /// same order as Successors, or it is empty if we don't use it (disable
+  /// optimization).
+  std::vector<BranchProbability> Probs;
+  typedef std::vector<BranchProbability>::iterator probability_iterator;
+  typedef std::vector<BranchProbability>::const_iterator
+      const_probability_iterator;
 
   /// Keep track of the physical registers that are livein of the basicblock.
   typedef std::vector<RegisterMaskPair> LiveInVector;
@@ -181,7 +190,7 @@ public:
     Ty &operator*() const { return *MII; }
     Ty *operator->() const { return &operator*(); }
 
-    operator Ty*() const { return MII; }
+    operator Ty *() const { return MII.getNodePtrUnchecked(); }
 
     bool operator==(const bundle_iterator &X) const {
       return MII == X.MII;
@@ -425,8 +434,36 @@ public:
   /// Note that duplicate Machine CFG edges are not allowed.
   void addSuccessor(MachineBasicBlock *Succ, uint32_t Weight = 0);
 
+  /// Add Succ as a successor of this MachineBasicBlock.  The Predecessors list
+  /// of Succ is automatically updated. The weight is not provided because BPI
+  /// is not available (e.g. -O0 is used), in which case edge weights won't be
+  /// used. Using this interface can save some space.
+  void addSuccessorWithoutWeight(MachineBasicBlock *Succ);
+
+  /// Add Succ as a successor of this MachineBasicBlock.  The Predecessors list
+  /// of Succ is automatically updated. PROB parameter is stored in
+  /// Probabilities list.
+  ///
+  /// Note that duplicate Machine CFG edges are not allowed.
+  void addSuccessor(MachineBasicBlock *Succ, BranchProbability Prob);
+
+  /// Add Succ as a successor of this MachineBasicBlock.  The Predecessors list
+  /// of Succ is automatically updated. The probability is not provided because
+  /// BPI is not available (e.g. -O0 is used), in which case edge probabilities
+  /// won't be used. Using this interface can save some space.
+  void addSuccessorWithoutProb(MachineBasicBlock *Succ);
+
   /// Set successor weight of a given iterator.
   void setSuccWeight(succ_iterator I, uint32_t Weight);
+
+  /// Set successor probability of a given iterator.
+  void setSuccProbability(succ_iterator I, BranchProbability Prob);
+
+  /// Normalize probabilities of all successors so that the sum of them becomes
+  /// one.
+  void normalizeSuccProbs() {
+    BranchProbability::normalizeProbabilities(Probs);
+  }
 
   /// Remove successor from the successors list of this MachineBasicBlock. The
   /// Predecessors list of Succ is automatically updated.
@@ -451,6 +488,9 @@ public:
 
   /// Return true if any of the successors have weights attached to them.
   bool hasSuccessorWeights() const { return !Weights.empty(); }
+
+  /// Return true if any of the successors have probabilities attached to them.
+  bool hasSuccessorProbabilities() const { return !Probs.empty(); }
 
   /// Return true if the specified MBB is a predecessor of this block.
   bool isPredecessor(const MachineBasicBlock *MBB) const;
@@ -600,7 +640,7 @@ public:
   /// remove_instr to remove individual instructions from a bundle.
   MachineInstr *remove(MachineInstr *I) {
     assert(!I->isBundled() && "Cannot remove bundled instructions");
-    return Insts.remove(I);
+    return Insts.remove(instr_iterator(I));
   }
 
   /// Remove the possibly bundled instruction from the instruction list
@@ -709,6 +749,11 @@ private:
   weight_iterator getWeightIterator(succ_iterator I);
   const_weight_iterator getWeightIterator(const_succ_iterator I) const;
 
+  /// Return probability iterator corresponding to the I successor iterator.
+  probability_iterator getProbabilityIterator(succ_iterator I);
+  const_probability_iterator
+  getProbabilityIterator(const_succ_iterator I) const;
+
   friend class MachineBranchProbabilityInfo;
   friend class MIPrinter;
 
@@ -717,6 +762,10 @@ private:
   /// MachineBranchProbabilityInfo class.
   uint32_t getSuccWeight(const_succ_iterator Succ) const;
 
+  /// Return probability of the edge from this block to MBB. This method should
+  /// NOT be called directly, but by using getEdgeProbability method from
+  /// MachineBranchProbabilityInfo class.
+  BranchProbability getSuccProbability(const_succ_iterator Succ) const;
 
   // Methods used to maintain doubly linked list of blocks...
   friend struct ilist_traits<MachineBasicBlock>;

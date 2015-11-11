@@ -246,7 +246,7 @@ Instruction *InstCombiner::FoldPHIArgGEPIntoPHI(PHINode &PN) {
 /// non-address-taken alloca.  Doing so will cause us to not promote the alloca
 /// to a register.
 static bool isSafeAndProfitableToSinkLoad(LoadInst *L) {
-  BasicBlock::iterator BBI = L, E = L->getParent()->end();
+  BasicBlock::iterator BBI = L->getIterator(), E = L->getParent()->end();
 
   for (++BBI; BBI != E; ++BBI)
     if (BBI->mayWriteToMemory())
@@ -358,7 +358,10 @@ Instruction *InstCombiner::FoldPHIArgLoadIntoPHI(PHINode &PN) {
     LLVMContext::MD_invariant_load,
     LLVMContext::MD_alias_scope,
     LLVMContext::MD_noalias,
-    LLVMContext::MD_nonnull
+    LLVMContext::MD_nonnull,
+    LLVMContext::MD_align,
+    LLVMContext::MD_dereferenceable,
+    LLVMContext::MD_dereferenceable_or_null,
   };
 
   for (unsigned ID : KnownIDs)
@@ -819,7 +822,7 @@ Instruction *InstCombiner::SliceUpIllegalIntegerPHI(PHINode &FirstPhi) {
         }
 
         // Otherwise, do an extract in the predecessor.
-        Builder->SetInsertPoint(Pred, Pred->getTerminator());
+        Builder->SetInsertPoint(Pred->getTerminator());
         Value *Res = InVal;
         if (Offset)
           Res = Builder->CreateLShr(Res, ConstantInt::get(InVal->getType(),

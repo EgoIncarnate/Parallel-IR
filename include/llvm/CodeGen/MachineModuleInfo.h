@@ -220,10 +220,9 @@ public:
   void setModule(const Module *M) { TheModule = M; }
   const Module *getModule() const { return TheModule; }
 
-  const Function *getWinEHParent(const Function *F) const;
   WinEHFuncInfo &getWinEHFuncInfo(const Function *F);
   bool hasWinEHFuncInfo(const Function *F) const {
-    return FuncInfoMap.count(getWinEHParent(F)) > 0;
+    return FuncInfoMap.count(F) > 0;
   }
 
   /// getInfo - Keep track of various per-function pieces of information for
@@ -245,6 +244,11 @@ public:
   ///
   bool hasDebugInfo() const { return DbgInfoAvailable; }
   void setDebugInfoAvailability(bool avail) { DbgInfoAvailable = avail; }
+
+  // Returns true if we need to generate precise CFI. Currently
+  // this is equivalent to hasDebugInfo(), but if we ever implement
+  // async EH, it will require precise CFI as well.
+  bool usePreciseUnwindInfo() const { return hasDebugInfo(); }
 
   bool callsEHReturn() const { return CallsEHReturn; }
   void setCallsEHReturn(bool b) { CallsEHReturn = b; }

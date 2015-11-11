@@ -640,6 +640,7 @@ an optional :ref:`comdat <langref_comdats>`,
 an optional :ref:`garbage collector name <gc>`, an optional :ref:`prefix <prefixdata>`,
 an optional :ref:`prologue <prologuedata>`,
 an optional :ref:`personality <personalityfn>`,
+an optional list of attached :ref:`metadata <metadata>`,
 an opening curly brace, a list of basic blocks, and a closing curly brace.
 
 LLVM function declarations consist of the "``declare``" keyword, an
@@ -688,7 +689,7 @@ Syntax::
            <ResultType> @<FunctionName> ([argument list])
            [unnamed_addr] [fn Attrs] [section "name"] [comdat [($name)]]
            [align N] [gc] [prefix Constant] [prologue Constant]
-           [personality Constant] { ... }
+           [personality Constant] (!name !N)* { ... }
 
 The argument list is a comma separated sequence of arguments where each
 argument is of the following form:
@@ -715,7 +716,7 @@ Aliases may have an optional :ref:`linkage type <linkage>`, an optional
 
 Syntax::
 
-    @<Name> = [Linkage] [Visibility] [DLLStorageClass] [ThreadLocal] [unnamed_addr] alias <AliaseeTy> @<Aliasee>
+    @<Name> = [Linkage] [Visibility] [DLLStorageClass] [ThreadLocal] [unnamed_addr] alias <AliaseeTy>, <AliaseeTy>* @<Aliasee>
 
 The linkage must be one of ``private``, ``internal``, ``linkonce``, ``weak``,
 ``linkonce_odr``, ``weak_odr``, ``external``. Note that some system linkers
@@ -1219,10 +1220,8 @@ example:
 ``convergent``
     This attribute indicates that the callee is dependent on a convergent
     thread execution pattern under certain parallel execution models.
-    Transformations that are execution model agnostic may only move or
-    tranform this call if the final location is control equivalent to its
-    original position in the program, where control equivalence is defined as
-    A dominates B and B post-dominates A, or vice versa.
+    Transformations that are execution model agnostic may not make the execution
+    of a convergent operation control dependent on any additional values.
 ``inlinehint``
     This attribute indicates that the source code contained a hint that
     inlining this function is desirable (such as the "inline" keyword in
@@ -1278,6 +1277,10 @@ example:
     This function attribute indicates that the function never returns
     normally. This produces undefined behavior at runtime if the
     function ever does dynamically return.
+``norecurse``
+    This function attribute indicates that the function does not call itself
+    either directly or indirectly down any possible call path. This produces
+    undefined behavior at runtime if the function ever does recurse.
 ``nounwind``
     This function attribute indicates that the function never raises an
     exception. If the function does raise an exception, its runtime
@@ -1453,6 +1456,7 @@ with certain LLVM instructions (currently only ``call`` s and
 incorrect and will change program semantics.
 
 Syntax::
+
     operand bundle set ::= '[' operand bundle ']'
     operand bundle ::= tag '(' [ bundle operand ] (, bundle operand )* ')'
     bundle operand ::= SSA value
@@ -1474,16 +1478,15 @@ long as the behavior of an operand bundle is describable within these
 restrictions, LLVM does not need to have special knowledge of the
 operand bundle to not miscompile programs containing it.
 
- - The bundle operands for an unknown operand bundle escape in unknown
-   ways before control is transferred to the callee or invokee.
-
- - Calls and invokes with operand bundles have unknown read / write
-   effect on the heap on entry and exit (even if the call target is
-   ``readnone`` or ``readonly``).
-
- - An operand bundle at a call site cannot change the implementation
-   of the called function.  Inter-procedural optimizations work as
-   usual as long as they take into account the first two properties.
+- The bundle operands for an unknown operand bundle escape in unknown
+  ways before control is transferred to the callee or invokee.
+- Calls and invokes with operand bundles have unknown read / write
+  effect on the heap on entry and exit (even if the call target is
+  ``readnone`` or ``readonly``), unless they're overriden with
+  callsite specific attributes.
+- An operand bundle at a call site cannot change the implementation
+  of the called function.  Inter-procedural optimizations work as
+  usual as long as they take into account the first two properties.
 
 .. _moduleasm:
 
@@ -1571,6 +1574,8 @@ as follows:
       symbols get a ``_`` prefix.
     * ``w``: Windows COFF prefix:  Similar to Mach-O, but stdcall and fastcall
       functions also get a suffix based on the frame size.
+    * ``x``: Windows x86 COFF prefix:  Similar to Windows COFF, but use a ``_``
+      prefix for ``__cdecl`` functions.
 ``n<size1>:<size2>:<size3>...``
     This specifies a set of native integer widths for the target CPU in
     bits. For example, it might contain ``n32`` for 32-bit PowerPC,
@@ -3624,12 +3629,21 @@ function is using two metadata arguments:
 
     call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
 
-Metadata can be attached with an instruction. Here metadata ``!21`` is
-attached to the ``add`` instruction using the ``!dbg`` identifier:
+Metadata can be attached to an instruction. Here metadata ``!21`` is attached
+to the ``add`` instruction using the ``!dbg`` identifier:
 
 .. code-block:: llvm
 
     %indvar.next = add i64 %indvar, 1, !dbg !21
+
+Metadata can also be attached to a function definition. Here metadata ``!22``
+is attached to the ``foo`` function using the ``!dbg`` identifier:
+
+.. code-block:: llvm
+
+    define void @foo() !dbg !22 {
+      ret void
+    }
 
 More information about specific metadata nodes recognized by the
 optimizers and code generator is found below.
@@ -3901,20 +3915,26 @@ All global variables should be referenced by the `globals:` field of a
 DISubprogram
 """"""""""""
 
-``DISubprogram`` nodes represent functions from the source language. The
-``variables:`` field points at :ref:`variables <DILocalVariable>` that must be
-retained, even if their IR counterparts are optimized out of the IR. The
-``type:`` field must point at an :ref:`DISubroutineType`.
+``DISubprogram`` nodes represent functions from the source language. A
+``DISubprogram`` may be attached to a function definition using ``!dbg``
+metadata. The ``variables:`` field points at :ref:`variables <DILocalVariable>`
+that must be retained, even if their IR counterparts are optimized out of
+the IR. The ``type:`` field must point at an :ref:`DISubroutineType`.
 
 .. code-block:: llvm
 
-    !0 = !DISubprogram(name: "foo", linkageName: "_Zfoov", scope: !1,
-                       file: !2, line: 7, type: !3, isLocal: true,
-                       isDefinition: false, scopeLine: 8, containingType: !4,
-                       virtuality: DW_VIRTUALITY_pure_virtual, virtualIndex: 10,
-                       flags: DIFlagPrototyped, isOptimized: true,
-                       function: void ()* @_Z3foov,
-                       templateParams: !5, declaration: !6, variables: !7)
+    define void @_Z3foov() !dbg !0 {
+      ...
+    }
+
+    !0 = distinct !DISubprogram(name: "foo", linkageName: "_Zfoov", scope: !1,
+                                file: !2, line: 7, type: !3, isLocal: true,
+                                isDefinition: false, scopeLine: 8,
+                                containingType: !4,
+                                virtuality: DW_VIRTUALITY_pure_virtual,
+                                virtualIndex: 10, flags: DIFlagPrototyped,
+                                isOptimized: true, templateParams: !5,
+                                declaration: !6, variables: !7)
 
 .. _DILexicalBlock:
 
@@ -6713,7 +6733,7 @@ Arguments:
 """"""""""
 
 The first operand of an '``extractvalue``' instruction is a value of
-:ref:`struct <t_struct>` or :ref:`array <t_array>` type. The operands are
+:ref:`struct <t_struct>` or :ref:`array <t_array>` type. The other operands are
 constant indices to specify which value to extract in a similar manner
 as indices in a '``getelementptr``' instruction.
 
