@@ -128,27 +128,28 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &LPM) {
   if (skipOptnoneFunction(L))
     return false;
 
-  //errs() << "Loop: \n";
-  //L->dump();
-  //errs() << "</Loop>\n";
+  errs() << "Loop: \n";
+  L->dump();
+  errs() << "</Loop>\n";
   BasicBlock* Header = L->getHeader();
   assert(Header);
   TerminatorInst* T = Header->getTerminator();
-  if( !isa<BranchInst>(T) ) return false;
+  if( !isa<BranchInst>(T) ) { printf("Wasn't branch\n"); return false; }
   BranchInst* B = (BranchInst*)T;
-  if( B->getNumSuccessors() != 2 ) return false;
+  if( B->getNumSuccessors() != 2 ){ printf("Had %u successors\n", B->getNumSuccessors()); return false; }
   BasicBlock *detacher = B->getSuccessor(0), *syncer = B->getSuccessor(1);
   if( isa<SyncInst>(detacher->getTerminator()) ){
     BasicBlock* temp = detacher;
     detacher = syncer;
     syncer = temp;
-  } else if( !isa<SyncInst>(syncer->getTerminator()) )
-    return false;
-    
+  } else if( !isa<SyncInst>(syncer->getTerminator()) ) {
+    printf("Doesn't end in sync\n");
+    return false; 
+  }
   DetachInst* det = dyn_cast<DetachInst>(detacher->getTerminator() );
-  if( det == nullptr ) return false;
-  if( detacher->size() != 1 ) return false;
-  if( syncer->size() != 1 ) return false;
+  if( det == nullptr ) { printf("No detach\n"); return false; }
+  if( detacher->size() != 1 ){ printf("detacher_size:%u\n", detacher->size()); return false; }
+  if( syncer->size() != 1 ){ printf("syncer_Size:%u\n", syncer->size()); return false; }
   
   //errs() << "Found candidate for cilk for!\n";
 
@@ -160,48 +161,55 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &LPM) {
   //    Loop::getCanonicalInductionVariable only supports loops with preheaders,
   //    and we're in trouble if we can't find the induction variable even when
   //    we've manually inserted one.
-  if (!L->isLoopSimplifyForm())
+  if (!L->isLoopSimplifyForm()) {
+    printf("Not simple\n");
     return false;
+  }
 
   BasicBlock* body = det->getSuccessor(0);
   PHINode* oldvar = L->getCanonicalInductionVariable();
-  if( !oldvar ) return false;
+  if( !oldvar ){ printf("no induct var\n"); return false; }
  
   BasicBlock* done = L->getUniqueExitBlock();
-  if( !done ) return false;
-  if( done != syncer ) return false;
+  if( !done ){ printf("no unique exit\n"); return false; }
+  if( done != syncer ){ printf("exit doesn't sync\n"); return false; }
 
   //PHINode* var = PHINode::Create( oldvar->getType(), 1, "", &body->front() );
   //ReplaceInstWithInst( var, oldvar );
  
   auto H = L->getHeader();
   Value* cmp = 0;
+  Value* idx = oldvar;
   for (BasicBlock::iterator I = H->begin(); I != H->end(); ++I) {
     Instruction* M = I;
     if( M == oldvar ) continue;
     if( BranchInst* b = dyn_cast<BranchInst>(M) ) {
-      if( b->getNumSuccessors() != 2 ) return false;
+      if( b->getNumSuccessors() != 2 ){ printf("Header bad branch:%u\n", b->getNumSuccessors()); return false; }
       if( b->getSuccessor(0) == detacher ) {
-        if( b->getSuccessor(1) != syncer ) return false;
+        if( b->getSuccessor(1) != syncer ) { printf("Header suc1\n"); return false; }
         else continue;
       }
       if( b->getSuccessor(1) == detacher ) {
-        if( b->getSuccessor(0) != syncer ) return false;
+        if( b->getSuccessor(0) != syncer ) { printf("Header suc0\n"); return false; }
         else continue;
       }
+      printf("unknown header inst\n");
       return false;
     }
+    if( dyn_cast<CastInst>(M) ) { idx = M; continue; }
     llvm::CmpInst* is = dyn_cast<CmpInst>(M);
-    if( !is ) return false;
-    if( !is->isIntPredicate() ) return false;
+    if( !is ) { printf("not comp\n"); return false; }
+    if( !is->isIntPredicate() ) { printf("non int\n"); return false; }
     auto P = is->getPredicate();
-    if( is->getOperand(0) != oldvar ) {
-      if( is->getOperand(1) == oldvar )
+    if( is->getOperand(0) != idx ) {
+      if( is->getOperand(1) == idx )
         P = is->getSwappedPredicate();
-      else
+      else {
+        printf("no oldvar\n");
         return false;
+      }
     }
-    if( cmp ) return false;
+    if( cmp ) { printf("multiple cmp\n"); return false; }
     cmp = is->getOperand(1);
     //assums non infinite detach loop
     switch( P ) {
@@ -220,6 +228,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &LPM) {
         cmp = addOne(cmp);
         break;
       default:
+        printf("unknown cmp\n");
         return false;
     }
     //TODO actually check is correct
@@ -229,8 +238,11 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   llvm::CallInst* call = 0; 
   llvm::Value*    closure = 0;
+
+  LPM.deleteLoopFromQueue(L);
+
   Function* extracted = llvm::cilk::extractDetachBodyToFunction( *det, &call, /*closure*/ oldvar, &closure );
-  if( !extracted ) return false;
+  if( !extracted ) { printf("failed to extract\n"); return false; }
 
 
 	Module* M = extracted->getParent();
@@ -280,6 +292,5 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &LPM) {
   
   syncer->eraseFromParent();
 
-  LPM.deleteLoopFromQueue(L);
   return true;
 }

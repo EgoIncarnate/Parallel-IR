@@ -397,6 +397,7 @@ bool llvm::hoistRegion(DomTreeNode *N, AliasAnalysis *AA, LoopInfo *LI,
       // if all of the operands of the instruction are loop invariant and if it
       // is safe to hoist the instruction.
       //
+
       if (CurLoop->hasLoopInvariantOperands(&I) &&
           canSinkOrHoistInst(I, AA, DT, TLI, CurLoop, CurAST, SafetyInfo) &&
           isSafeToExecuteUnconditionally(I, DT, TLI, CurLoop, SafetyInfo,
@@ -462,24 +463,39 @@ bool canSinkOrHoistInst(Instruction &I, AliasAnalysis *AA, DominatorTree *DT,
 
     return !pointerInvalidatedByLoop(LI->getOperand(0), Size, AAInfo, CurAST);
   } else if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+    fflush(0);
+    printf("<testing>\n");
+    fflush(0);
+    CI->dump();
+    fflush(0);
+    printf("</testing>\n");
+
     // Don't sink or hoist dbg info; it's legal, but not useful.
-    if (isa<DbgInfoIntrinsic>(I))
+    if (isa<DbgInfoIntrinsic>(I)) {
+      printf("isdebug\n");
       return false;
+    }
 
     // Handle simple cases by querying alias analysis.
     FunctionModRefBehavior Behavior = AA->getModRefBehavior(CI);
     if (Behavior == FMRB_DoesNotAccessMemory)
       return true;
+    printf("behavior %u\n", Behavior);
     if (AliasAnalysis::onlyReadsMemory(Behavior)) {
       // A readonly argmemonly function only reads from memory pointed to by
       // it's arguments with arbitrary offsets.  If we can prove there are no
       // writes to this memory in the loop, we can hoist or sink.
+      printf("only reads memory\n");
       if (AliasAnalysis::onlyAccessesArgPointees(Behavior)) {
+        printf("only accesses pointees\n");
         for (Value *Op : CI->arg_operands())
           if (Op->getType()->isPointerTy() &&
               pointerInvalidatedByLoop(Op, MemoryLocation::UnknownSize,
-                                       AAMDNodes(), CurAST))
+                                       AAMDNodes(), CurAST)) {
+
+            printf("isinvalid\n");
             return false;
+          }
         return true;
       }
       // If this call only reads from memory and there are no writes to memory
@@ -498,7 +514,7 @@ bool canSinkOrHoistInst(Instruction &I, AliasAnalysis *AA, DominatorTree *DT,
 
     // FIXME: This should use mod/ref information to see if we can hoist or
     // sink the call.
-
+    printf("ending tests sad\n");
     return false;
   }
 
@@ -705,30 +721,57 @@ static bool isGuaranteedToExecute(const Instruction &Inst,
   // If the instruction is in the header block for the loop (which is very
   // common), it is always guaranteed to dominate the exit blocks.  Since this
   // is a common case, and can save some work, check it now.
-  if (Inst.getParent() == CurLoop->getHeader())
+  if (Inst.getParent() == CurLoop->getHeader()) {
     // If there's a throw in the header block, we can't guarantee we'll reach
     // Inst.
     return !SafetyInfo->HeaderMayThrow;
+  }
 
   // Somewhere in this loop there is an instruction which may throw and make us
   // exit the loop.
-  if (SafetyInfo->MayThrow)
+  if (SafetyInfo->MayThrow) {
     return false;
+  }
 
   // Get the exit blocks for the current loop.
   SmallVector<BasicBlock*, 8> ExitBlocks;
   CurLoop->getExitBlocks(ExitBlocks);
 
+  printf("<exec>\n");
+  fflush(0);
+  Inst.dump();
+  fflush(0);
+  printf("</exec>\n");
+
   // Verify that the block dominates each of the exit blocks of the loop.
   for (unsigned i = 0, e = ExitBlocks.size(); i != e; ++i)
-    if (!DT->dominates(Inst.getParent(), ExitBlocks[i]))
+    if (!DT->dominates(Inst.getParent(), ExitBlocks[i])) {
+      bool valid = false;
+      printf("here\n");
+      for( BasicBlock* b : CurLoop->getBlocks() ) {
+        if( auto RE = dyn_cast<ReattachInst>(b->getTerminator()) ) {
+          if( b == Inst.getParent() || DT->dominates(Inst.getParent(), b) ) {
+            bool tv = true;
+            for(unsigned i2=0; i2!=e; ++i2){
+              if( !DT->dominates( RE->getSuccessor(0), ExitBlocks[i2] ) )  {
+                tv = false; break;
+              }
+            }
+            if( tv ) {
+              valid = true;
+              break;
+            }
+          }
+        }
+      }
+      if( valid ) continue;
       return false;
-
+    }
   // As a degenerate case, if the loop is statically infinite then we haven't
   // proven anything since there are no exit blocks.
-  if (ExitBlocks.empty())
+  if (ExitBlocks.empty()) {
     return false;
-
+  }
   return true;
 }
 
