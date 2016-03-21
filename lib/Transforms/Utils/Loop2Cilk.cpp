@@ -77,6 +77,7 @@ namespace {
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<LoopInfoWrapperPass>();
       AU.addRequired<ScalarEvolutionWrapperPass>();
+//      AU.addRequired<IndVarSimplify>();
 //      AU.addRequired<SimplifyCFGPass>();
 //      AU.addRequired<PromotePass>();
       AU.addRequiredID(LoopSimplifyID);
@@ -103,6 +104,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
+//INITIALIZE_PASS_DEPENDENCY(IndVarSimplify)
 //INITIALIZE_PASS_DEPENDENCY(PromotePass)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_END(Loop2Cilk, "loop2cilk",
@@ -118,6 +120,17 @@ size_t countPredecessors(BasicBlock* syncer) {
     count++;
   }
   return count;
+}
+
+BasicBlock* getUniquePred(BasicBlock* syncer) {
+  BasicBlock* pred = 0;
+  size_t count = 0;
+  for (auto it = pred_begin(syncer), et = pred_end(syncer); it != et; ++it) {
+    count++;
+    pred = *it;
+  }
+  if( count != 1 ) pred = 0;
+  return pred;
 }
 
 Value* addOne( Value* V ) {
@@ -170,10 +183,6 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   BasicBlock* Header = L->getHeader();
   assert(Header);
 
-  errs() << "<F>:\n******************************************************************************************************************************************";
-  Header->getParent()->dump();
-  errs() << "</F>:\n******************************************************************************************************************************************";
-
   TerminatorInst* T = Header->getTerminator();
   if( !isa<BranchInst>(T) ) {
     BasicBlock *Preheader = L->getLoopPreheader();
@@ -218,6 +227,11 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
       if( endL ) endL->dump();
       else errs() << "no endl" << "\n";
       T->dump();
+      errs() << "initial endl\n";
+      if (L->getExitBlock() == 0 ){
+        errs() << " no exit block\n";
+      } else
+        L->getExitBlock()->dump();
       return false;
     }
 
@@ -243,6 +257,24 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
       errs() << "no unique exit block\n";
       return false;
     }
+    if( auto BI = dyn_cast<BranchInst>(done->getTerminator()) ) {
+      if( BI->getNumSuccessors() == 2 ) {
+        if( BI->getSuccessor(0) == detacher && BI->getSuccessor(1) == syncer )
+          done = syncer;
+        if( BI->getSuccessor(1) == detacher && BI->getSuccessor(0) == syncer )
+          done = syncer;
+      }
+    }
+    if( getUniquePred(done) == syncer ){
+      auto term = done->getTerminator();
+      bool good = true;
+      for(int i=0; i<term->getNumSuccessors(); i++)
+        if( L->contains( term->getSuccessor(i))){
+          good = false;
+          break;
+        }
+      if( good ) done = syncer;
+    }
     if( done != syncer ) {
       errs() << "exit != sync\n";
       done->dump();
@@ -267,11 +299,17 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
     errs() << "invalid sync size" << "\n";
     return false;
   }
+
+  errs() << "<F>:\n******************************************************************************************************************************************";
+  Header->getParent()->dump();
+  errs() << "</F>:\n******************************************************************************************************************************************";
+
   errs() << "Found candidate for cilk for!\n";
 
   BasicBlock* body = det->getSuccessor(0);
   PHINode* oldvar = L->getCanonicalInductionVariable();
   if( !oldvar ) {
+
       errs() << "no induction var\n";
       return false;
   }
@@ -279,7 +317,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   //ReplaceInstWithInst( var, oldvar );
   Value* adder = 0;
   for( unsigned i=0; i<oldvar->getNumIncomingValues(); i++){
-    if( oldvar->getIncomingBlock(i) == Header ){
+    if( !L->contains(oldvar->getIncomingBlock(i) ) || oldvar->getIncomingBlock(0) == Header ) {
       if( ConstantInt* ci = dyn_cast<ConstantInt>(oldvar->getIncomingValue(i))) {
         if( !ci->isZero() ) {
           errs() << "nonzero start";
@@ -287,6 +325,8 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
         }
       } else {
         errs() << "non-constant start\n";
+        oldvar->getIncomingValue(i)->dump();
+        oldvar->dump();
         return false;
       }
     } else {
@@ -307,11 +347,14 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
         } else {
           errs() << "non-constant inc\n";
           oldvar->getIncomingValue(i)->dump();
+          oldvar->dump();
           return false;
         }
         adder = bo;
       } else {
-        errs() << "non-constant start\n";
+        errs() << "non-binop inc\n";
+        oldvar->getIncomingValue(i)->dump();
+        oldvar->dump();
         return false;
       }
     }
@@ -445,12 +488,40 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   llvm::CallInst* call = 0;
   llvm::Value*    closure = 0;
 
+  DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  std::vector<Value*> toMove;
+  toMove.push_back(cmp);
+  Instruction* pi = detacher->getTerminator();
+  while( !toMove.empty() ) {
+    auto b = toMove.back();
+    toMove.pop_back();
+    if( Instruction* inst = dyn_cast<Instruction>(b) ) {
+      for (User::op_iterator i = inst->op_begin(), e = inst->op_end(); i != e; ++i) {
+        Value *v = *i;
+        toMove.push_back(v);
+      }
+      if( !DT.dominates(inst, detacher) ) {
+        inst->moveBefore(pi);
+        pi = inst;
+      }
+    }
+  }
+  errs() << "<cmp>\n";
+  cmp->dump();
+  Header->getParent()->dump();
+  detacher->dump();
+  errs() << "</cmp>\n";
+
   Function* extracted = llvm::cilk::extractDetachBodyToFunction( *det, &call, /*closure*/ oldvar, &closure );
 
   if( !extracted ) {
     errs() << "not extracted\n";
     return false;
   }
+  errs() << "<EXT>:\n*##########################################3*****************************************************************************************************************************************";
+  Header->getParent()->dump();
+  extracted->dump();
+  errs() << "</EXT>:\n*############################################################33*****************************************************************************************************************************************";
 	Module* M = extracted->getParent();
 
   oldvar->removeIncomingValue( 1U );

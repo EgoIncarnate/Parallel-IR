@@ -316,7 +316,7 @@ static void EmitSaveFloatingPointState(IRBuilder<> &B, Value *SF) {
     GEP(B, SF, StackFrameBuilder::mxcsr),
     GEP(B, SF, StackFrameBuilder::fpcsr)
   };
-  
+
   B.CreateCall(Asm, args);
 }
 
@@ -397,7 +397,7 @@ static CallInst *EmitCilkSetJmp(IRBuilder<> &B, Value *SF, Module& M) {
   B.CreateStore(StackAddr, StackSaveSlot);
 
   // Call LLVM's EH setjmp, which is lightweight.
-  
+
 	Value* F = Intrinsic::getDeclaration(&M, Intrinsic::eh_sjlj_setjmp);
   Buf = B.CreateBitCast(Buf, Int8PtrTy);
 
@@ -784,7 +784,7 @@ static Function *GetCilkExceptingSyncFn(Module &M) {
   //***INTEL
   // Special Intel-specific attribute for inliner.
   Fn->addFnAttr("INTEL_ALWAYS_INLINE");
-  
+
 //TODO?
 //  llvm::NamedMDNode *SyncMetadata = M.getOrInsertNamedMetadata("cilk.sync");
 
@@ -1160,7 +1160,7 @@ static llvm::AllocaInst *CreateStackFrame(Function &F) {
 
   llvm::LLVMContext &Ctx = F.getContext();
   llvm::Type *SFTy = StackFrameBuilder::get(Ctx);
-  
+
 	Instruction* I = F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
 
 	AllocaInst* SF = new AllocaInst(SFTy, /*size*/nullptr, 8, /*name*/stack_frame_name, /*insert before*/I);
@@ -1174,7 +1174,7 @@ static llvm::AllocaInst *CreateStackFrame(Function &F) {
  static inline llvm::Value* GetOrInitStackFrame(Function& F, bool fast = true, bool instrument = false) {
   llvm::Value* V = LookupStackFrame(F);
   if( V ) return V;
-  
+
   llvm::AllocaInst* alloc = CreateStackFrame(F);
   llvm::BasicBlock::iterator II = F.getEntryBlock().getFirstInsertionPt();
   llvm::AllocaInst* curinst;
@@ -1218,7 +1218,7 @@ static llvm::AllocaInst *CreateStackFrame(Function &F) {
   }
 
   std::vector<ReturnInst*> rets;
-    
+
 	for (Function::iterator i = F.begin(), e = F.end(); i != e; ++i) {
 		TerminatorInst* term = i->getTerminator();
 		if( term == nullptr ) continue;
@@ -1226,9 +1226,9 @@ static llvm::AllocaInst *CreateStackFrame(Function &F) {
 			rets.emplace_back( inst );
 		} else continue;
 	}
-	
+
 	assert( rets.size() > 0 );
-	
+
 	Instruction* retInst = nullptr;
 	if( rets.size() > 1 ) {
 	  //TODO check this
@@ -1245,7 +1245,7 @@ static llvm::AllocaInst *CreateStackFrame(Function &F) {
 	} else {
 	  retInst = rets[0];
 	}
-	
+
 	assert( retInst );
 	CallInst::Create( GetCilkParentEpilogue( *F.getParent(), instrument ), args, "", retInst );
   return alloc;
@@ -1345,7 +1345,7 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 		if (!functionPieces.insert(BB).second)
 		  continue;
 
-		TerminatorInst* term = BB->getTerminator();      
+		TerminatorInst* term = BB->getTerminator();
 		if( term == nullptr ) return nullptr;
 		if( ReattachInst* inst = llvm::dyn_cast<ReattachInst>(term) ) {
 			//only analyze reattaches going to the same continuation
@@ -1373,8 +1373,9 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 			return nullptr;
 		}
 	}
-
+	functionPieces.erase(Spawned);
 	std::vector<BasicBlock*> blocks( functionPieces.begin(), functionPieces.end() );
+	blocks.insert( blocks.begin(), Spawned );
 	for( auto& a : blocks ){
 	  if( a == Spawned ) {
 			//assert only came from the detach
@@ -1406,7 +1407,7 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
   PHINode *fake;
   Instruction* add = 0;
   if( closure ) {
-      
+
     IRBuilder<> inspawn(Spawned->getFirstNonPHI());
 
     SetVector<Value*> Inputs, Outputs;
@@ -1468,7 +1469,10 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 
     replaceInList( closure, idx, functionPieces );
   }
-
+	errs() << "beforeExtract\n";
+	blocks[0]->getParent()->dump();
+	for(auto& a:blocks) a->dump();
+	errs() << "</beforeExtract>\n";
 	CodeExtractor extractor( ArrayRef<BasicBlock*>( blocks ), /*dominator tree -- todo? */ nullptr );
 	assert( extractor.isEligible() && "Code not able to be extracted!" );
 
@@ -1578,7 +1582,7 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 	assert( ret && "No return from extract function" );
 	//TODO alow to work for functions with multiple returns
 
-	/* 
+	/*
 	   __cilkrts_pop_frame(&sf);
 	   if (sf->flags)
 	   __cilkrts_leave_frame(&sf);
@@ -1594,7 +1598,7 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 				 bool instrument = false) {
   BasicBlock* detB = detach.getParent();
 	Function& F = *(detB->getParent());
-        
+
 	BasicBlock* Spawned  = detach.getSuccessor(0);
 	BasicBlock* Continue = detach.getSuccessor(1);
 
@@ -1630,9 +1634,9 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 
     	C = B.CreateICmpEQ(C, ConstantInt::get(C->getType(), 0));
     	B.CreateCondBr(C, Spawned, Continue);
-    
+
     	detach.eraseFromParent();
- 
+
         makeFunctionDetachable( *extracted, instrument );
 
 

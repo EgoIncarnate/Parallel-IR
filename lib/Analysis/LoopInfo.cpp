@@ -230,10 +230,13 @@ bool Loop::isLoopSimplifyForm() const {
 bool Loop::isSafeToClone() const {
   // Return false if any loop blocks contain indirectbrs, or there are any calls
   // to noduplicate functions.
+  bool first = true;
   for (Loop::block_iterator I = block_begin(), E = block_end(); I != E; ++I) {
     if (isa<IndirectBrInst>((*I)->getTerminator()))
       return false;
-
+    if (first && isa<DetachInst>((*I)->getTerminator()))
+      return false;
+    first = false;
     if (const InvokeInst *II = dyn_cast<InvokeInst>((*I)->getTerminator())) {
       if (II->cannotDuplicate())
         return false;

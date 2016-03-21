@@ -1,0 +1,6 @@
+[submodule "tools/clang"]
+	path = tools/clang
+	url = ssh://git@github.com/taekwonbilly/Cilk-Clang
+[submodule "Parallel-IR-Tests"]
+	path = Parallel-IR-Tests
+	url = ssh://git@github.com/taekwonbilly/Parallel-IR-Tests
