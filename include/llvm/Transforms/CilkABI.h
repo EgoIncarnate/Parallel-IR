@@ -1376,6 +1376,7 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 	functionPieces.erase(Spawned);
 	std::vector<BasicBlock*> blocks( functionPieces.begin(), functionPieces.end() );
 	blocks.insert( blocks.begin(), Spawned );
+	functionPieces.insert(Spawned);
 	for( auto& a : blocks ){
 	  if( a == Spawned ) {
 			//assert only came from the detach
@@ -1469,10 +1470,10 @@ static inline Function* extractDetachBodyToFunction(DetachInst& detach, llvm::Ca
 
     replaceInList( closure, idx, functionPieces );
   }
-	errs() << "beforeExtract\n";
-	blocks[0]->getParent()->dump();
-	for(auto& a:blocks) a->dump();
-	errs() << "</beforeExtract>\n";
+	//errs() << "beforeExtract\n";
+	//blocks[0]->getParent()->dump();
+	//for(auto& a:blocks) a->dump();
+	//errs() << "</beforeExtract>\n";
 	CodeExtractor extractor( ArrayRef<BasicBlock*>( blocks ), /*dominator tree -- todo? */ nullptr );
 	assert( extractor.isEligible() && "Code not able to be extracted!" );
 
