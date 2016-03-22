@@ -1226,9 +1226,9 @@ static inline llvm::Value* GetOrInitStackFrame(Function& F, bool fast = true, bo
       rets.emplace_back( inst );
     } else continue;
   }
-    
+
   assert( rets.size() > 0 );
-    
+
   Instruction* retInst = nullptr;
   if( rets.size() > 1 ) {
     //TODO check this
@@ -1245,7 +1245,7 @@ static inline llvm::Value* GetOrInitStackFrame(Function& F, bool fast = true, bo
   } else {
     retInst = rets[0];
   }
-    
+
   assert( retInst );
   CallInst::Create( GetCilkParentEpilogue( *F.getParent(), instrument ), args, "", retInst );
   return alloc;
@@ -1373,7 +1373,12 @@ reattachB.push_back(BB);
 	for( unsigned idx = 0, max = inst->getNumSuccessors(); idx < max; idx++ )
 		todo.emplace_back( inst->getSuccessor(idx) );
 	continue;
+} else if( auto f = llvm::dyn_cast<UnreachableInst>(term) ) {
+  continue;
 } else {
+  term->getParent()->getParent()->dump();
+  term->getParent()->dump();
+  term->dump();
 	assert( 0 && "Detached block did not absolutely terminate in reattach");
 	return nullptr;
 }
@@ -1584,7 +1589,7 @@ static inline bool makeFunctionDetachable( Function& extracted, bool instrument 
   assert( ret && "No return from extract function" );
   //TODO alow to work for functions with multiple returns
 
-  /* 
+  /*
      __cilkrts_pop_frame(&sf);
      if (sf->flags)
      __cilkrts_leave_frame(&sf);

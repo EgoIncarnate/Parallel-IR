@@ -55,7 +55,7 @@ void StringMapImpl::init(unsigned InitSize) {
 /// specified bucket will be non-null.  Otherwise, it will be null.  In either
 /// case, the FullHashValue field of the bucket will be set to the hash value
 /// of the string.
-unsigned StringMapImpl::LookupBucketFor(StringRef Name) {
+__attribute__((no_sanitize_memory)) unsigned StringMapImpl::LookupBucketFor(StringRef Name) {
   unsigned HTSize = NumBuckets;
   if (HTSize == 0) {  // Hash table unallocated so far?
     init(16);
