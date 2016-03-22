@@ -266,10 +266,12 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
       }
     }
     if( getUniquePred(done) == syncer ){
+      errs() << "has unique pred\n";
       auto term = done->getTerminator();
       bool good = true;
       for(int i=0; i<term->getNumSuccessors(); i++)
-        if( L->contains( term->getSuccessor(i))){
+        if( L->contains( term->getSuccessor(i)) ){
+          errs() << "loop contains succ " << term->getSuccessor(i)->getName() << "\n";
           good = false;
           break;
         }
@@ -307,6 +309,11 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   errs() << "Found candidate for cilk for!\n";
 
   BasicBlock* body = det->getSuccessor(0);
+  SmallVector<WeakVH, 16> DeadInsts;
+  DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  DT.recalculate(*L->getHeader()->getParent());
+  simplifyLoopIVs(L, nullptr, &DT, &LI, DeadInsts);
   PHINode* oldvar = L->getCanonicalInductionVariable();
   if( !oldvar ) {
 
@@ -488,7 +495,6 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   llvm::CallInst* call = 0;
   llvm::Value*    closure = 0;
 
-  DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   std::vector<Value*> toMove;
   toMove.push_back(cmp);
   Instruction* pi = detacher->getTerminator();
@@ -573,8 +579,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   syncer->eraseFromParent();
   Header->getParent()->dump();
 
-  LoopInfo &loopInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  loopInfo.updateUnloop(L);
+  LI.updateUnloop(L);
   errs() << "TRANSFORMED LOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
   return true;
 }
