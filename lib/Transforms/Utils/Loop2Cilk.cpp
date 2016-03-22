@@ -579,7 +579,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   syncer->eraseFromParent();
   Header->getParent()->dump();
 
-  LI.updateUnloop(L);
+  LI.markAsRemoved(L);
   errs() << "TRANSFORMED LOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
   return true;
 }
