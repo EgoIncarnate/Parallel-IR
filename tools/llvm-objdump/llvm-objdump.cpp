@@ -22,20 +22,21 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/FaultMaps.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCRelocationInfo.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCRelocationInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/Archive.h"
-#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Casting.h"
@@ -181,6 +182,11 @@ cl::opt<bool>
 cl::opt<bool> PrintFaultMaps("fault-map-section",
                              cl::desc("Display contents of faultmap section"));
 
+cl::opt<DIDumpType> llvm::DwarfDumpType(
+    "dwarf", cl::init(DIDT_Null), cl::desc("Dump of dwarf debug sections:"),
+    cl::values(clEnumValN(DIDT_Frames, "frames", ".debug_frame"),
+               clEnumValEnd));
+
 static StringRef ToolName;
 
 namespace {
@@ -308,12 +314,15 @@ public:
                          ArrayRef<uint8_t> Bytes, uint64_t Address,
                          raw_ostream &OS, StringRef Annot,
                          MCSubtargetInfo const &STI) {
-    outs() << format("%8" PRIx64 ":", Address);
+    OS << format("%8" PRIx64 ":", Address);
     if (!NoShowRawInsn) {
-      outs() << "\t";
-      dumpBytes(Bytes, outs());
+      OS << "\t";
+      dumpBytes(Bytes, OS);
     }
-    IP.printInst(MI, outs(), "", STI);
+    if (MI)
+      IP.printInst(MI, OS, "", STI);
+    else
+      OS << " <unknown>";
   }
 };
 PrettyPrinter PrettyPrinterInst;
@@ -334,6 +343,11 @@ public:
                  ArrayRef<uint8_t> Bytes, uint64_t Address,
                  raw_ostream &OS, StringRef Annot,
                  MCSubtargetInfo const &STI) override {
+    if (!MI) {
+      printLead(Bytes, Address, OS);
+      OS << " <unknown>";
+      return;
+    }
     std::string Buffer;
     {
       raw_string_ostream TempStream(Buffer);
@@ -470,6 +484,7 @@ static std::error_code getRelocationValueString(const ELFObjectFile<ELFT> *Obj,
       res = "Unknown";
     }
     break;
+  case ELF::EM_LANAI:
   case ELF::EM_AARCH64: {
     std::string fmtbuf;
     raw_string_ostream fmt(fmtbuf);
@@ -1081,72 +1096,69 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
         if (Index >= End)
           break;
 
-        if (DisAsm->getInstruction(Inst, Size, Bytes.slice(Index),
-                                   SectionAddr + Index, DebugOut,
-                                   CommentStream)) {
-          PIP.printInst(*IP, &Inst,
-                        Bytes.slice(Index, Size),
-                        SectionAddr + Index, outs(), "", *STI);
-          outs() << CommentStream.str();
-          Comments.clear();
+        bool Disassembled = DisAsm->getInstruction(Inst, Size, Bytes.slice(Index),
+                                                   SectionAddr + Index, DebugOut,
+                                                   CommentStream);
+        if (Size == 0)
+          Size = 1;
+        PIP.printInst(*IP, Disassembled ? &Inst : nullptr,
+                      Bytes.slice(Index, Size),
+                      SectionAddr + Index, outs(), "", *STI);
+        outs() << CommentStream.str();
+        Comments.clear();
 
-          // Try to resolve the target of a call, tail call, etc. to a specific
-          // symbol.
-          if (MIA && (MIA->isCall(Inst) || MIA->isUnconditionalBranch(Inst) ||
-                      MIA->isConditionalBranch(Inst))) {
-            uint64_t Target;
-            if (MIA->evaluateBranch(Inst, SectionAddr + Index, Size, Target)) {
-              // In a relocatable object, the target's section must reside in
-              // the same section as the call instruction or it is accessed
-              // through a relocation.
-              //
-              // In a non-relocatable object, the target may be in any section.
-              //
-              // N.B. We don't walk the relocations in the relocatable case yet.
-              auto *TargetSectionSymbols = &Symbols;
-              if (!Obj->isRelocatableObject()) {
-                auto SectionAddress = std::upper_bound(
-                    SectionAddresses.begin(), SectionAddresses.end(), Target,
-                    [](uint64_t LHS,
-                       const std::pair<uint64_t, SectionRef> &RHS) {
-                      return LHS < RHS.first;
-                    });
-                if (SectionAddress != SectionAddresses.begin()) {
-                  --SectionAddress;
-                  TargetSectionSymbols = &AllSymbols[SectionAddress->second];
-                } else {
-                  TargetSectionSymbols = nullptr;
-                }
+        // Try to resolve the target of a call, tail call, etc. to a specific
+        // symbol.
+        if (MIA && (MIA->isCall(Inst) || MIA->isUnconditionalBranch(Inst) ||
+                    MIA->isConditionalBranch(Inst))) {
+          uint64_t Target;
+          if (MIA->evaluateBranch(Inst, SectionAddr + Index, Size, Target)) {
+            // In a relocatable object, the target's section must reside in
+            // the same section as the call instruction or it is accessed
+            // through a relocation.
+            //
+            // In a non-relocatable object, the target may be in any section.
+            //
+            // N.B. We don't walk the relocations in the relocatable case yet.
+            auto *TargetSectionSymbols = &Symbols;
+            if (!Obj->isRelocatableObject()) {
+              auto SectionAddress = std::upper_bound(
+                  SectionAddresses.begin(), SectionAddresses.end(), Target,
+                  [](uint64_t LHS,
+                      const std::pair<uint64_t, SectionRef> &RHS) {
+                    return LHS < RHS.first;
+                  });
+              if (SectionAddress != SectionAddresses.begin()) {
+                --SectionAddress;
+                TargetSectionSymbols = &AllSymbols[SectionAddress->second];
+              } else {
+                TargetSectionSymbols = nullptr;
               }
+            }
 
-              // Find the first symbol in the section whose offset is less than
-              // or equal to the target.
-              if (TargetSectionSymbols) {
-                auto TargetSym = std::upper_bound(
-                    TargetSectionSymbols->begin(), TargetSectionSymbols->end(),
-                    Target, [](uint64_t LHS,
-                               const std::pair<uint64_t, StringRef> &RHS) {
-                      return LHS < RHS.first;
-                    });
-                if (TargetSym != TargetSectionSymbols->begin()) {
-                  --TargetSym;
-                  uint64_t TargetAddress = std::get<0>(*TargetSym);
-                  StringRef TargetName = std::get<1>(*TargetSym);
-                  outs() << " <" << TargetName;
-                  uint64_t Disp = Target - TargetAddress;
-                  if (Disp)
-                    outs() << '+' << utohexstr(Disp);
-                  outs() << '>';
-                }
+            // Find the first symbol in the section whose offset is less than
+            // or equal to the target.
+            if (TargetSectionSymbols) {
+              auto TargetSym = std::upper_bound(
+                  TargetSectionSymbols->begin(), TargetSectionSymbols->end(),
+                  Target, [](uint64_t LHS,
+                              const std::pair<uint64_t, StringRef> &RHS) {
+                    return LHS < RHS.first;
+                  });
+              if (TargetSym != TargetSectionSymbols->begin()) {
+                --TargetSym;
+                uint64_t TargetAddress = std::get<0>(*TargetSym);
+                StringRef TargetName = std::get<1>(*TargetSym);
+                outs() << " <" << TargetName;
+                uint64_t Disp = Target - TargetAddress;
+                if (Disp)
+                  outs() << "+0x" << utohexstr(Disp);
+                outs() << '>';
               }
             }
           }
-          outs() << "\n";
-        } else {
-          errs() << ToolName << ": warning: invalid instruction encoding\n";
-          if (Size == 0)
-            Size = 1; // skip illegible bytes
         }
+        outs() << "\n";
 
         // Print relocation for instruction.
         while (rel_cur != rel_end) {
@@ -1561,6 +1573,11 @@ static void DumpObject(const ObjectFile *o) {
     printRawClangAST(o);
   if (PrintFaultMaps)
     printFaultMaps(o);
+  if (DwarfDumpType != DIDT_Null) {
+    std::unique_ptr<DIContext> DICtx(new DWARFContextInMemory(*o));
+    // Dump the complete DWARF structure.
+    DICtx->dump(outs(), DwarfDumpType, true /* DumpEH */);
+  }
 }
 
 /// @brief Dump each object file in \a a;
@@ -1654,7 +1671,8 @@ int main(int argc, char **argv) {
       && !(DylibId && MachOOpt)
       && !(ObjcMetaData && MachOOpt)
       && !(FilterSections.size() != 0 && MachOOpt)
-      && !PrintFaultMaps) {
+      && !PrintFaultMaps
+      && DwarfDumpType == DIDT_Null) {
     cl::PrintHelpMessage();
     return 2;
   }

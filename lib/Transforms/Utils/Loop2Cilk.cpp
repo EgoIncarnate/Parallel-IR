@@ -53,6 +53,7 @@
 #include "llvm/Transforms/CilkABI.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Scalar/IndVarSimplify.h"
 
 using namespace llvm;
 
@@ -77,7 +78,7 @@ namespace {
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<LoopInfoWrapperPass>();
       AU.addRequired<ScalarEvolutionWrapperPass>();
-//      AU.addRequired<IndVarSimplify>();
+      AU.addRequired<IndVarSimplify>();
 //      AU.addRequired<SimplifyCFGPass>();
 //      AU.addRequired<PromotePass>();
       AU.addRequiredID(LoopSimplifyID);
@@ -104,7 +105,8 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
-//INITIALIZE_PASS_DEPENDENCY(IndVarSimplify)
+INITIALIZE_PASS_DEPENDENCY(IndVarSimplify)
+
 //INITIALIZE_PASS_DEPENDENCY(PromotePass)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_END(Loop2Cilk, "loop2cilk",
@@ -166,7 +168,7 @@ size_t getNonPhiSize(BasicBlock* b){
     while (isa<PHINode>(i) || isa<DbgInfoIntrinsic>(i)) { ++i; bad++; }
     return b->size() - bad;
 }
-bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
+bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager & lpm) {
   if (skipOptnoneFunction(L))
     return false;
 
@@ -310,16 +312,23 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
 
   BasicBlock* body = det->getSuccessor(0);
   SmallVector<WeakVH, 16> DeadInsts;
+  ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   DT.recalculate(*L->getHeader()->getParent());
-  simplifyLoopIVs(L, nullptr, &DT, &LI, DeadInsts);
+  L->dump();
+  L->verifyLoop();
+  simplifyLoopIVs(L, &SE, &DT, &LI, DeadInsts);
   PHINode* oldvar = L->getCanonicalInductionVariable();
   if( !oldvar ) {
-
       errs() << "no induction var\n";
+      //((LoopPass*)createIndVarSimplifyPass())->runOnLoop(L, lpm);
+      oldvar = L->getCanonicalInductionVariable();
+      if( oldvar ) goto evar;
+      errs() << "no induction var2\n";
       return false;
   }
+  evar:
   //PHINode* var = PHINode::Create( oldvar->getType(), 1, "", &body->front() );
   //ReplaceInstWithInst( var, oldvar );
   Value* adder = 0;
@@ -390,7 +399,8 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
 
   for (auto it = pred_begin(syncer), et = pred_end(syncer); it != et; ++it) {
     BasicBlock* pred = *it;
-    if( pred == Header ) break;
+    errs() << "checking " << pred->getName() << " for cmp\n";
+    if( pred->getTerminator()->getNumSuccessors() == 1 ) continue;
     if( cmp != 0 ){
       errs() << "comparisoin already set\n";
       return false;
@@ -492,6 +502,10 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   }
 
   endT:
+  if( cmp == 0 ) {
+    errs() << "cannot find cmp\n";
+    return false;
+  }
   llvm::CallInst* call = 0;
   llvm::Value*    closure = 0;
 
@@ -501,6 +515,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   while( !toMove.empty() ) {
     auto b = toMove.back();
     toMove.pop_back();
+    b->dump();
     if( Instruction* inst = dyn_cast<Instruction>(b) ) {
       for (User::op_iterator i = inst->op_begin(), e = inst->op_end(); i != e; ++i) {
         Value *v = *i;
@@ -578,7 +593,6 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager &) {
   //TODO assumes no other detaches were sync'd by this
   syncer->eraseFromParent();
   Header->getParent()->dump();
-
   LI.markAsRemoved(L);
   errs() << "TRANSFORMED LOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
   return true;

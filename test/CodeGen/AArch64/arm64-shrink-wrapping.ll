@@ -1,5 +1,5 @@
-; RUN: llc %s -o - -enable-shrink-wrap=true -disable-post-ra | FileCheck %s --check-prefix=CHECK --check-prefix=ENABLE
-; RUN: llc %s -o - -enable-shrink-wrap=false -disable-post-ra | FileCheck %s --check-prefix=CHECK --check-prefix=DISABLE
+; RUN: llc %s -o - -enable-shrink-wrap=true -disable-post-ra -disable-fp-elim | FileCheck %s --check-prefix=CHECK --check-prefix=ENABLE
+; RUN: llc %s -o - -enable-shrink-wrap=false -disable-post-ra -disable-fp-elim | FileCheck %s --check-prefix=CHECK --check-prefix=DISABLE
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-ios"
 
@@ -33,8 +33,8 @@ target triple = "arm64-apple-ios"
 ; Without shrink-wrapping, epilogue is in the exit block.
 ; DISABLE: [[EXIT_LABEL]]:
 ; Epilogue code.
-; CHECK-NEXT: mov sp, [[SAVE_SP]]
-; CHECK-NEXT: ldp [[SAVE_SP]], [[CSR]], [sp], #16
+; CHECK-NEXT: add sp, sp, #16
+; CHECK-NEXT: ldp x{{[0-9]+}}, [[CSR]], [sp], #16
 ;
 ; With shrink-wrapping, exit block is a simple return.
 ; ENABLE: [[EXIT_LABEL]]:
@@ -473,7 +473,7 @@ if.end:                                           ; preds = %for.body, %if.else
 ; DISABLE: [[IFEND_LABEL]]: ; %if.end
 ;
 ; Epilogue code.
-; CHECK: mov sp, [[NEW_SP]]
+; CHECK: add sp, sp, #48
 ; CHECK-NEXT: ldp [[CSR1]], [[CSR2]], [sp], #16
 ; CHECK-NEXT: ret
 ;
@@ -631,16 +631,20 @@ end:
   ret void
 }
 
-; Don't do shrink-wrapping when we need to re-align the stack pointer.
-; See bug 26642.
+; Re-aligned stack pointer.  See bug 26642.  Avoid clobbering live
+; values in the prologue when re-aligning the stack pointer.
 ; CHECK-LABEL: stack_realign:
-; CHECK-NOT: lsl w[[LSL1:[0-9]+]], w0, w1
-; CHECK-NOT: lsl w[[LSL2:[0-9]+]], w1, w0
+; ENABLE-DAG: lsl w[[LSL1:[0-9]+]], w0, w1
+; ENABLE-DAG: lsl w[[LSL2:[0-9]+]], w1, w0
+; DISABLE-NOT: lsl w[[LSL1:[0-9]+]], w0, w1
+; DISABLE-NOT: lsl w[[LSL2:[0-9]+]], w1, w0
 ; CHECK: stp x29, x30, [sp, #-16]!
 ; CHECK: mov x29, sp
-; CHECK: sub x{{[0-9]+}}, sp, #16
-; CHECK-DAG: lsl w[[LSL1:[0-9]+]], w0, w1
-; CHECK-DAG: lsl w[[LSL2:[0-9]+]], w1, w0
+; ENABLE-NOT: sub x[[LSL1]], sp, #16
+; ENABLE-NOT: sub x[[LSL2]], sp, #16
+; DISABLE: sub x{{[0-9]+}}, sp, #16
+; DISABLE-DAG: lsl w[[LSL1:[0-9]+]], w0, w1
+; DISABLE-DAG: lsl w[[LSL2:[0-9]+]], w1, w0
 ; CHECK-DAG: str w[[LSL1]],
 ; CHECK-DAG: str w[[LSL2]],
 

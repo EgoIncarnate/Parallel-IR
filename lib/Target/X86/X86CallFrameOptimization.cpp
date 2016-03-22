@@ -110,7 +110,7 @@ private:
 };
 
 char X86CallFrameOptimization::ID = 0;
-}
+} // end anonymous namespace
 
 FunctionPass *llvm::createX86CallFrameOptimization() {
   return new X86CallFrameOptimization();
@@ -233,11 +233,11 @@ bool X86CallFrameOptimization::runOnMachineFunction(MachineFunction &MF) {
 
   ContextVector CallSeqVector;
 
-  for (MachineFunction::iterator BB = MF.begin(), E = MF.end(); BB != E; ++BB)
-    for (MachineBasicBlock::iterator I = BB->begin(); I != BB->end(); ++I)
-      if (I->getOpcode() == FrameSetupOpcode) {
+  for (auto &MBB : MF)
+    for (auto &MI : MBB)
+      if (MI.getOpcode() == FrameSetupOpcode) {
         CallContext Context;
-        collectCallInfo(MF, *BB, I, Context);
+        collectCallInfo(MF, MBB, MI, Context);
         CallSeqVector.push_back(Context);
       }
 
@@ -440,7 +440,6 @@ void X86CallFrameOptimization::collectCallInfo(MachineFunction &MF,
       return;
 
   Context.UsePush = true;
-  return;
 }
 
 bool X86CallFrameOptimization::adjustCallSequence(MachineFunction &MF,

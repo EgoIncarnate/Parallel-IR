@@ -13,8 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 
-#ifndef LLVM_LIB_TARGET_R600_SIREGISTERINFO_H
-#define LLVM_LIB_TARGET_R600_SIREGISTERINFO_H
+#ifndef LLVM_LIB_TARGET_AMDGPU_SIREGISTERINFO_H
+#define LLVM_LIB_TARGET_AMDGPU_SIREGISTERINFO_H
 
 #include "AMDGPURegisterInfo.h"
 #include "AMDGPUSubtarget.h"
@@ -23,7 +23,7 @@
 
 namespace llvm {
 
-struct SIRegisterInfo : public AMDGPURegisterInfo {
+struct SIRegisterInfo final : public AMDGPURegisterInfo {
 private:
   unsigned SGPR32SetID;
   unsigned VGPR32SetID;
@@ -49,6 +49,8 @@ public:
 
   bool requiresRegisterScavenging(const MachineFunction &Fn) const override;
 
+  bool requiresFrameIndexScavenging(const MachineFunction &MF) const override;
+
   void eliminateFrameIndex(MachineBasicBlock::iterator MI, int SPAdj,
                            unsigned FIOperandNum,
                            RegScavenger *RS) const override;
@@ -70,9 +72,12 @@ public:
   }
 
   bool isSGPRReg(const MachineRegisterInfo &MRI, unsigned Reg) const {
+    const TargetRegisterClass *RC;
     if (TargetRegisterInfo::isVirtualRegister(Reg))
-      return isSGPRClass(MRI.getRegClass(Reg));
-    return getPhysRegClass(Reg);
+      RC = MRI.getRegClass(Reg);
+    else
+      RC = getPhysRegClass(Reg);
+    return isSGPRClass(RC);
   }
 
   /// \returns true if this class contains VGPR registers.
@@ -88,6 +93,10 @@ public:
   /// \returns A VGPR reg class with the same width as \p SRC
   const TargetRegisterClass *getEquivalentVGPRClass(
                                           const TargetRegisterClass *SRC) const;
+
+  /// \returns A SGPR reg class with the same width as \p SRC
+  const TargetRegisterClass *getEquivalentSGPRClass(
+                                           const TargetRegisterClass *VRC) const;
 
   /// \returns The register class that is used for a sub-register of \p RC for
   /// the given \p SubIdx.  If \p SubIdx equals NoSubRegister, \p RC will
@@ -117,10 +126,12 @@ public:
 
   enum PreloadedValue {
     // SGPRS:
-    PRIVATE_SEGMENT_BUFFER =  0,
+    PRIVATE_SEGMENT_BUFFER = 0,
     DISPATCH_PTR        =  1,
     QUEUE_PTR           =  2,
     KERNARG_SEGMENT_PTR =  3,
+    DISPATCH_ID         =  4,
+    FLAT_SCRATCH_INIT   =  5,
     WORKGROUP_ID_X      = 10,
     WORKGROUP_ID_Y      = 11,
     WORKGROUP_ID_Z      = 12,
@@ -156,7 +167,7 @@ private:
   void buildScratchLoadStore(MachineBasicBlock::iterator MI,
                              unsigned LoadStoreOp, unsigned Value,
                              unsigned ScratchRsrcReg, unsigned ScratchOffset,
-                             int64_t Offset, RegScavenger *RS) const;
+                             int64_t Offset) const;
 };
 
 } // End namespace llvm

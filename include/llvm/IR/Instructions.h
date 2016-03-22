@@ -1790,6 +1790,10 @@ public:
   void setConvergent() {
     addAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
   }
+  void setNotConvergent() {
+    removeAttribute(AttributeSet::FunctionIndex,
+                    Attribute::get(getContext(), Attribute::Convergent));
+  }
 
   /// \brief Determine if the call returns a structure through first
   /// pointer argument.
@@ -3709,6 +3713,16 @@ public:
     addAttribute(AttributeSet::FunctionIndex, Attribute::NoDuplicate);
   }
 
+  /// \brief Determine if the invoke is convergent
+  bool isConvergent() const { return hasFnAttr(Attribute::Convergent); }
+  void setConvergent() {
+    addAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
+  }
+  void setNotConvergent() {
+    removeAttribute(AttributeSet::FunctionIndex,
+                    Attribute::get(getContext(), Attribute::Convergent));
+  }
+
   /// \brief Determine if the call returns a structure through first
   /// pointer argument.
   bool hasStructRetAttr() const {
@@ -4205,7 +4219,9 @@ public:
   }
   unsigned getNumSuccessors() const { return 1; }
 
-  Value *getParentPad() const {
+  /// Get the parentPad of this catchret's catchpad's catchswitch.
+  /// The successor block is implicitly a member of this funclet.
+  Value *getCatchSwitchParentPad() const {
     return getCatchPad()->getCatchSwitch()->getParentPad();
   }
 
