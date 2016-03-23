@@ -4555,7 +4555,6 @@ public:
   static SyncInst *Create(BasicBlock *Continue, BasicBlock *InsertAtEnd) {
     return new(1) SyncInst(Continue, InsertAtEnd);
   }
-
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
 

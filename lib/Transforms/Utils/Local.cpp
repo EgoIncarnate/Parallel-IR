@@ -563,6 +563,7 @@ void llvm::MergeBasicBlockIntoOnlyPred(BasicBlock *DestBB, DominatorTree *DT) {
 
   BasicBlock *PredBB = DestBB->getSinglePredecessor();
   assert(PredBB && "Block doesn't have a single predecessor!");
+  assert( !isa<SyncInst>(PredBB->getTerminator()) );
 
   // Zap anything that took the address of DestBB.  Not doing this will give the
   // address an invalid value.
@@ -615,7 +616,7 @@ static bool CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ) {
         << Succ->getName() << "\n");
   // Shortcut, if there is only a single predecessor it must be BB and merging
   // is always safe
-  if (Succ->getSinglePredecessor()) return true;
+  if (Succ->getSinglePredecessor()) return !isa<SyncInst>(Succ->getSinglePredecessor()->getTerminator());
 
   // Make a list of the predecessors of BB
   SmallPtrSet<BasicBlock*, 16> BBPreds(pred_begin(BB), pred_end(BB));
@@ -624,7 +625,6 @@ static bool CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ) {
   // merging these blocks
   for (BasicBlock::iterator I = Succ->begin(); isa<PHINode>(I); ++I) {
     PHINode *PN = cast<PHINode>(I);
-
     // If the incoming value from BB is again a PHINode in
     // BB which has the same incoming value for *PI as PN does, we can
     // merge the phi nodes and then the blocks can still be merged
@@ -632,6 +632,7 @@ static bool CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ) {
     if (BBPN && BBPN->getParent() == BB) {
       for (unsigned PI = 0, PE = PN->getNumIncomingValues(); PI != PE; ++PI) {
         BasicBlock *IBB = PN->getIncomingBlock(PI);
+        if( isa<SyncInst>(IBB->getTerminator())) return false;
         if (BBPreds.count(IBB) &&
             !CanMergeValues(BBPN->getIncomingValueForBlock(IBB),
                             PN->getIncomingValue(PI))) {
@@ -649,6 +650,7 @@ static bool CanPropagatePredecessorsForPHIs(BasicBlock *BB, BasicBlock *Succ) {
         // one for BB, in which case this phi node will not prevent the merging
         // of the block.
         BasicBlock *IBB = PN->getIncomingBlock(PI);
+        if( isa<SyncInst>(IBB->getTerminator())) return false;
         if (BBPreds.count(IBB) &&
             !CanMergeValues(Val, PN->getIncomingValue(PI))) {
           DEBUG(dbgs() << "Can't fold, phi node " << PN->getName() << " in "
@@ -806,6 +808,7 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB) {
          "TryToSimplifyUncondBranchFromEmptyBlock called on entry block!");
 
   // We can't eliminate infinite loops.
+  assert( isa<BranchInst>(BB->getTerminator()) );
   BasicBlock *Succ = cast<BranchInst>(BB->getTerminator())->getSuccessor(0);
   if (BB == Succ) return false;
 
@@ -841,7 +844,9 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB) {
   }
 
   DEBUG(dbgs() << "Killing Trivial BB: \n" << *BB);
-
+  //for(auto& a : PredBlockVector(pred_begin(BB),pred_end(BB))){
+  //  if( isa<SyncInst>(a->getTerminator()) ) return false;
+  //}
   if (isa<PHINode>(Succ->begin())) {
     // If there is more than one pred of succ, and there are PHI nodes in
     // the successor, then we need to add incoming edges for the PHI nodes
@@ -1541,12 +1546,12 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J,
         // Preserve !invariant.group in K.
         break;
       case LLVMContext::MD_align:
-        K->setMetadata(Kind, 
+        K->setMetadata(Kind,
           MDNode::getMostGenericAlignmentOrDereferenceable(JMD, KMD));
         break;
       case LLVMContext::MD_dereferenceable:
       case LLVMContext::MD_dereferenceable_or_null:
-        K->setMetadata(Kind, 
+        K->setMetadata(Kind,
           MDNode::getMostGenericAlignmentOrDereferenceable(JMD, KMD));
         break;
     }
@@ -1566,7 +1571,7 @@ unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
                                         DominatorTree &DT,
                                         const BasicBlockEdge &Root) {
   assert(From->getType() == To->getType());
-  
+
   unsigned Count = 0;
   for (Value::use_iterator UI = From->use_begin(), UE = From->use_end();
        UI != UE; ) {
@@ -1738,7 +1743,7 @@ collectBitParts(Value *V, bool MatchBSwaps, bool MatchBitReversals,
       unsigned NumMaskedBits = AndMask.countPopulation();
       if (!MatchBitReversals && NumMaskedBits % 8 != 0)
         return Result;
-      
+
       auto &Res = collectBitParts(I->getOperand(0), MatchBSwaps,
                                   MatchBitReversals, BPS);
       if (!Res)

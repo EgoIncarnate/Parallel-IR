@@ -197,7 +197,53 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager & lpm) {
   BranchInst* B = (BranchInst*)T;
   BasicBlock *detacher, *syncer;
   if( B->getNumSuccessors() != 2 ) {
-    BasicBlock* endL = L->getExitBlock();
+    SmallVector< BasicBlock *, 32> exitBlocks;
+    L->getExitBlocks(exitBlocks);
+    BasicBlock* endL = 0;
+    SmallPtrSet<BasicBlock *, 32> inLoop(exitBlocks.begin(), exitBlocks.end());
+    if( inLoop.size() >= 2) {
+      for( auto& a : exitBlocks ) {
+        SmallPtrSet<BasicBlock *, 32> reachable;
+        std::vector<BasicBlock*> Q;
+        Q.push_back(a);
+        bool valid = true;
+        while(!Q.empty() && valid){
+          auto m = Q.back();
+          Q.pop_back();
+          if( isa<UnreachableInst>(a->getTerminator()) ) {
+            errs() << "re erasing: " << m->getName() << "\n";
+            reachable.insert(m);
+          }
+          else if( auto b = dyn_cast<BranchInst>(a->getTerminator()) ) {
+            bool bad = false;
+            for( int i=0; i<b->getNumSuccessors(); i++ ) {
+              if( L->contains( b->getSuccessor(i) ) || std::find(exitBlocks.begin(), exitBlocks.end(), b->getSuccessor(i) ) != exitBlocks.end() ) {
+
+              } else{
+                bad =  true;
+                break;
+              }
+            }
+            if( bad ) valid = false;
+            else {
+              reachable.insert(m);
+            }
+          }
+          else valid = false;
+
+        }
+        if( valid ) {
+          for( auto b : reachable){
+            errs() << "erasing: " << b->getName() << "\n";
+            inLoop.erase(b);
+          }
+        }
+      }
+    }
+    errs() << "<blocks>\n";
+    for(auto a : inLoop) a->dump();
+    errs() << "</blocks>\n";
+    if( inLoop.size() == 1 ) endL = * inLoop.begin();
     while( endL && !isa<SyncInst>( endL->getTerminator() ) ) {
       errs() << "THING: " << endL->size() << " " << isa<BranchInst>(endL->getTerminator()) << " " << (endL->getTerminator()->getNumSuccessors() ) << "\n";
       endL->dump();
@@ -317,7 +363,7 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager & lpm) {
   LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   DT.recalculate(*L->getHeader()->getParent());
   L->dump();
-  L->verifyLoop();
+  //L->verifyLoop();
   simplifyLoopIVs(L, &SE, &DT, &LI, DeadInsts);
   PHINode* oldvar = L->getCanonicalInductionVariable();
   if( !oldvar ) {
@@ -333,14 +379,15 @@ bool Loop2Cilk::runOnLoop(Loop *L, LPPassManager & lpm) {
   //ReplaceInstWithInst( var, oldvar );
   Value* adder = 0;
   for( unsigned i=0; i<oldvar->getNumIncomingValues(); i++){
-    if( !L->contains(oldvar->getIncomingBlock(i) ) || oldvar->getIncomingBlock(0) == Header ) {
+    if( !L->contains(oldvar->getIncomingBlock(i) ) || oldvar->getIncomingBlock(i) == Header ) {
       if( ConstantInt* ci = dyn_cast<ConstantInt>(oldvar->getIncomingValue(i))) {
         if( !ci->isZero() ) {
           errs() << "nonzero start";
           return false;
         }
       } else {
-        errs() << "non-constant start\n";
+        errs() << "non-constant start " << (!L->contains(oldvar->getIncomingBlock(i))) << " " << (oldvar->getIncomingBlock(i) == Header) << "\n";
+        oldvar->getIncomingBlock(i)->dump();
         oldvar->getIncomingValue(i)->dump();
         oldvar->dump();
         return false;
